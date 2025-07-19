@@ -210,3 +210,4 @@ __marimo__/
 neo4j_data_volumes/
 .idea
 documents
+documents_split
