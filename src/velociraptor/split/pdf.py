@@ -56,6 +56,7 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
     control_in_progress.touch()
     logger.info(f"Started processing '{pdf_path.name}'")
     
+    pdf_document = None
     try:
         pages_dir.mkdir(parents=True, exist_ok=True)
         
@@ -65,21 +66,27 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
         logger.info(f"Processing {page_count} pages from '{pdf_path.name}'...")
         
         for page_num in range(page_count):
-            page = pdf_document[page_num]
-            mat = fitz.Matrix(2.0, 2.0)
-            pix = page.get_pixmap(matrix=mat)
-            
-            filename = f"{page_num + 1:05d}.jpg"
-            output_path = pages_dir / filename
-            pix.save(output_path, jpg_quality=50)
-            logger.debug(f"Saved page {page_num + 1} as {filename}")
-            yield output_path
+            try:
+                page = pdf_document[page_num]
+                mat = fitz.Matrix(2.0, 2.0)
+                pix = page.get_pixmap(matrix=mat)
+                
+                filename = f"{page_num + 1:05d}.jpg"
+                output_path = pages_dir / filename
+                pix.save(output_path, jpg_quality=50)
+                logger.debug(f"Saved page {page_num + 1} as {filename}")
+                yield output_path
+            except Exception as e:
+                logger.error(f"Error processing page {page_num + 1} of '{pdf_path.name}': {e}", exc_info=True)
+                # Mark as error and re-raise
+                if control_in_progress.exists():
+                    control_in_progress.rename(control_error)
+                raise
         
-        pdf_document.close()
-        
-        # Success - rename control file
-        control_in_progress.rename(control_success)
-        logger.info(f"Successfully split PDF into {page_count} JPG files in '{pages_dir}'")
+        # Success - rename control file only if we completed all pages
+        if control_in_progress.exists():
+            control_in_progress.rename(control_success)
+            logger.info(f"Successfully split PDF into {page_count} JPG files in '{pages_dir}'")
         
     except Exception as e:
         logger.error(f"Error processing PDF '{pdf_path.name}': {e}", exc_info=True)
@@ -89,3 +96,12 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
             control_in_progress.rename(control_error)
         
         raise
+    finally:
+        if pdf_document:
+            pdf_document.close()
+        
+        # Handle case where generator was not fully consumed
+        # If control.in-progress still exists, mark as error
+        if control_in_progress.exists():
+            logger.warning(f"Generator for '{pdf_path.name}' was not fully consumed, marking as error")
+            control_in_progress.rename(control_error)

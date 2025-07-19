@@ -26,7 +26,7 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
     """Recursively summarizes layers of summaries up to the root document."""
     if len(summaries) < 3:
         # base case, we've reached the root doc
-        summary = summarize_summaries(*summaries)
+        summary = summarize_summaries(*summaries, position=0)
         doc.summary = summary.summary
         doc.height = summary.height
         db.save_node(doc)
@@ -76,7 +76,7 @@ def process_documents_folder() -> None:
         
         mime_type, _ = mimetypes.guess_type(file_path)
         doc = Document(
-            summary="", # not yet known
+            summary="UNKNOWN", # not yet known
             height=-1,  # not yet known
             position=0,
             file_path=f"files/documents/${file_path.name}",
@@ -119,10 +119,7 @@ def process_documents_folder() -> None:
                 db.link(summaries[-1], summary)
             summaries.append(summary)
 
-            summarize_layer(summaries, doc)
-
-            logger.info(f"Successfully processed: {file_path}")
-
+        summarize_layer(summaries, doc)
 
 if __name__ == "__main__":
     process_documents_folder()
