@@ -6,3 +6,4 @@
 - Always clean up unused imports
 - Always include stack traces when logging errors in catch blocks
 - Avoid swallowing exceptions in most cases.  If you need to catch them for logging, rethrow them
+- Don't use relative path imports in python

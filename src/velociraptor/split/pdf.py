@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Union
+from typing import Union, Generator
 import fitz
 import shutil
 
@@ -8,7 +8,7 @@ from velociraptor.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path, None] = None) -> None:
+def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path, None] = None) -> Generator[Path, None, None]:
     """
     Split a PDF file into individual JPG images for each page.
     Creates a 'pages' folder in the same directory as the PDF, or in specified output directory.
@@ -36,7 +36,9 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
     
     # Check for existing control files
     if control_success.exists():
-        logger.info(f"PDF '{pdf_path.name}' already processed successfully. Skipping.")
+        logger.info(f"PDF '{pdf_path.name}' already processed successfully. Yielding existing pages.")
+        for page_file in sorted(pages_dir.glob("*.jpg")):
+            yield page_file
         return
     
     if control_in_progress.exists():
@@ -71,6 +73,7 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
             output_path = pages_dir / filename
             pix.save(output_path, jpg_quality=50)
             logger.debug(f"Saved page {page_num + 1} as {filename}")
+            yield output_path
         
         pdf_document.close()
         
