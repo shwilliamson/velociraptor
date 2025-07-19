@@ -17,8 +17,8 @@ def sanitize_folder_name(filename: str) -> str:
 
 def process_documents_folder() -> None:
     project_root = Path(__file__).parent.parent.parent.parent
-    documents_path = project_root / "documents"
-    documents_split_path = project_root / "documents_split"
+    documents_path = project_root / "files" / "documents"
+    documents_split_path = project_root / "files" / "documents_split"
     
     if not documents_path.exists():
         logger.info(f"Creating documents folder: {documents_path}")
@@ -40,7 +40,7 @@ def process_documents_folder() -> None:
         if mime_type == "application/pdf":
             logger.info(f"Found PDF: {file_path}")
             
-            # Create folder structure: documents_split/filename/
+            # Create folder structure: files/documents_split/filename/
             folder_name = sanitize_folder_name(file_path.name)
             output_folder = documents_split_path / folder_name
             
