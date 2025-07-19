@@ -2,7 +2,7 @@ import mimetypes
 import re
 from pathlib import Path
 
-from velociraptor.splitters.pdf_splitter import split_pdf_to_images
+from velociraptor.split.pdf import split_pdf_to_images
 from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
