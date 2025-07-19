@@ -41,7 +41,7 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         batch = summaries[i:i+3] \
             if i + 2 < len(summaries) \
             else summaries[i:]
-        new_summary = summarize_summaries(*batch)
+        new_summary = summarize_summaries(*batch, position=len(new_summaries))
         i += 2  # Move by 2 to create overlap
 
         new_summaries.append(new_summary)
