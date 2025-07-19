@@ -58,24 +58,25 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
         pages_dir.mkdir(parents=True, exist_ok=True)
         
         pdf_document = fitz.open(pdf_path)
+        page_count = len(pdf_document)
         
-        logger.info(f"Processing {len(pdf_document)} pages from '{pdf_path.name}'...")
+        logger.info(f"Processing {page_count} pages from '{pdf_path.name}'...")
         
-        for page_num in range(len(pdf_document)):
+        for page_num in range(page_count):
             page = pdf_document[page_num]
             mat = fitz.Matrix(2.0, 2.0)
             pix = page.get_pixmap(matrix=mat)
             
             filename = f"{page_num + 1:05d}.jpg"
             output_path = pages_dir / filename
-            pix.save(output_path, quality=50)
+            pix.save(output_path, jpg_quality=50)
             logger.debug(f"Saved page {page_num + 1} as {filename}")
         
         pdf_document.close()
         
         # Success - rename control file
         control_in_progress.rename(control_success)
-        logger.info(f"Successfully split PDF into {len(pdf_document)} JPG files in '{pages_dir}'")
+        logger.info(f"Successfully split PDF into {page_count} JPG files in '{pages_dir}'")
         
     except Exception as e:
         logger.error(f"Error processing PDF '{pdf_path.name}': {e}", exc_info=True)
