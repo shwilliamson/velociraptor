@@ -9,8 +9,7 @@ class Document(Node):
     file_name: str
     file_path: str
     mime_type: str
-    document_uuid: str = field(default_factory=lambda: "")
+    document_uuid: str = field(init=False)
     
     def __post_init__(self):
-        if not self.document_uuid:
-            self.document_uuid = self.uuid
+        self.document_uuid = self.uuid
