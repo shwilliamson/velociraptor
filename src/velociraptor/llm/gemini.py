@@ -1,4 +1,3 @@
-import logging
 import os
 import time
 from typing import Optional, Generator
@@ -8,8 +7,9 @@ from google.genai.types import Part, GenerateContentConfig
 
 from velociraptor.models.attachment import Attachment
 from velociraptor.models.chunk import Chunk
+from velociraptor.utils.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Gemini:
