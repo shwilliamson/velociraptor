@@ -116,6 +116,14 @@ Velociraptor is designed to work with MCP (Model Context Protocol) clients like 
 
 To enable full agentic search functionality, configure these MCP servers in your MCP client:
 
+#### Docker Image Download
+
+First, pull the required Docker image for the filesystem MCP server:
+
+```bash
+docker pull mcp/filesystem
+```
+
 #### 1. Neo4j MCP Server
 
 Add to your MCP client configuration:
@@ -124,13 +132,16 @@ Add to your MCP client configuration:
 {
   "mcpServers": {
     "neo4j": {
-      "command": "npx",
-      "args": ["@modelcontextprotocol/server-neo4j"],
-      "env": {
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USERNAME": "neo4j",
-        "NEO4J_PASSWORD": "neo4j_password"
-      }
+      "command": "uvx",
+      "args": [
+          "mcp-neo4j-cypher",
+          "--db-url",
+          "neo4j://localhost:7687",
+          "--username",
+          "neo4j",
+          "--password",
+          "neo4j_password"
+      ]
     }
   }
 }
@@ -144,8 +155,16 @@ For accessing page images and document metadata:
 {
   "mcpServers": {
     "filesystem": {
-      "command": "npx",
-      "args": ["@modelcontextprotocol/server-filesystem", "/path/to/velociraptor/files"]
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--mount",
+        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/veolciraptor,ro",
+        "mcp/filesystem",
+        "/projects"
+      ]
     }
   }
 }
@@ -164,17 +183,28 @@ Edit your Claude Desktop configuration file:
 {
   "mcpServers": {
     "neo4j": {
-      "command": "npx",
-      "args": ["@modelcontextprotocol/server-neo4j"],
-      "env": {
-        "NEO4J_URI": "bolt://localhost:7687",
-        "NEO4J_USERNAME": "neo4j",
-        "NEO4J_PASSWORD": "neo4j_password"
-      }
+      "command": "uvx",
+      "args": [
+          "mcp-neo4j-cypher",
+          "--db-url",
+          "neo4j://localhost:7687",
+          "--username",
+          "neo4j",
+          "--password",
+          "neo4j_password"
+      ]
     },
     "filesystem": {
-      "command": "npx",
-      "args": ["@modelcontextprotocol/server-filesystem", "/Users/yourusername/path/to/velociraptor/files"]
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "--mount",
+        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/veolciraptor,ro",
+        "mcp/filesystem",
+        "/projects"
+      ]
     }
   }
 }
