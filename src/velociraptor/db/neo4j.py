@@ -115,14 +115,13 @@ class Neo4jDb:
     def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
         index_queries = [
-            # Full text index on Document.summary
+            # Individual full text indexes
             "CREATE FULLTEXT INDEX document_summary_fulltext IF NOT EXISTS FOR (d:Document) ON EACH [d.summary]",
-            
-            # Full text index on Summary.summary
             "CREATE FULLTEXT INDEX summary_summary_fulltext IF NOT EXISTS FOR (s:Summary) ON EACH [s.summary]",
-            
-            # Full text index on Page.full_text
             "CREATE FULLTEXT INDEX page_fulltext_fulltext IF NOT EXISTS FOR (p:Page) ON EACH [p.full_text]",
+            
+            # Combined full text index for searching all text content at once
+            "CREATE FULLTEXT INDEX all_text_content IF NOT EXISTS FOR (d:Document|s:Summary|p:Page) ON EACH [d.summary, s.summary, p.full_text]",
             
             # Vector index on Chunk.embedding
             "CREATE VECTOR INDEX chunk_embedding_vector IF NOT EXISTS FOR (c:Chunk) ON (c.embedding) "
