@@ -46,9 +46,9 @@ class Neo4jDb:
             if value is not None:
                 properties[field.name] = value
         
-        # Create Cypher query to upsert the node
+        # Create Cypher query to upsert the node with both specific and searchable labels
         label = node.label
-        cypher_query = f"MERGE (n:{label} {{uuid: $props.uuid}}) SET n = $props RETURN n.uuid as uuid"
+        cypher_query = f"MERGE (n:{label}:Searchable {{uuid: $props.uuid}}) SET n = $props RETURN n.uuid as uuid"
         
         with self.driver.session() as session:
             result = session.run(cypher_query, props=properties)
@@ -83,14 +83,14 @@ class Neo4jDb:
         self.save_node(page)
         self.create_edge(doc, page, EdgeType.CONTAINS)
         self.create_edge(page, doc, EdgeType.PART_OF)
-        for c in chunk_and_embed(page.full_text):
+        for c in chunk_and_embed(page.text):
             self.save_chunk(c, page)
         if prior_page:
             self.link(prior_page, page)
 
     def save_page_summary(self, summary: Summary, page: Page, prior_summary: Optional[Summary]):
         self.save_node(summary)
-        for c in chunk_and_embed(summary.summary):
+        for c in chunk_and_embed(summary.text):
             self.save_chunk(c, summary)
         self.create_edge(summary, page, EdgeType.SUMMARIZES)
         if prior_summary:
@@ -98,16 +98,16 @@ class Neo4jDb:
 
     def save_summary(self, summary: Summary, prior_summary: Optional[Summary], child_summaries: list[Summary]):
         self.save_node(summary)
-        for c in chunk_and_embed(summary.summary):
+        for c in chunk_and_embed(summary.text):
             self.save_chunk(c, summary)
         if prior_summary:
             self.link(prior_summary, summary)
         for child in child_summaries:
             self.create_edge(summary, child, EdgeType.SUMMARIZES)
 
-    def save_document(self, doc: Document, summaries: list[Summary]):
+    def save_document(self, doc: Document, summaries: list[Summary] = []):
         self.save_node(doc)
-        for c in chunk_and_embed(doc.summary):
+        for c in chunk_and_embed(doc.text):
             self.save_chunk(c, doc)
         for s in summaries:
             self.create_edge(doc, s, EdgeType.SUMMARIZES)
@@ -115,13 +115,8 @@ class Neo4jDb:
     def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
         index_queries = [
-            # Individual full text indexes
-            "CREATE FULLTEXT INDEX document_summary_fulltext IF NOT EXISTS FOR (d:Document) ON EACH [d.summary]",
-            "CREATE FULLTEXT INDEX summary_summary_fulltext IF NOT EXISTS FOR (s:Summary) ON EACH [s.summary]",
-            "CREATE FULLTEXT INDEX page_fulltext_fulltext IF NOT EXISTS FOR (p:Page) ON EACH [p.full_text]",
-            
-            # Combined full text index for searching all text content at once
-            "CREATE FULLTEXT INDEX all_text_content IF NOT EXISTS FOR (d:Document|s:Summary|p:Page) ON EACH [d.summary, s.summary, p.full_text]",
+            # Single fulltext index for all searchable content
+            "CREATE FULLTEXT INDEX all_text_content IF NOT EXISTS FOR (s:Searchable) ON EACH [s.text]",
             
             # Vector index on Chunk.embedding
             "CREATE VECTOR INDEX chunk_embedding_vector IF NOT EXISTS FOR (c:Chunk) ON (c.embedding) "

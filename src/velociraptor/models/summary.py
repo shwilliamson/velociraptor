@@ -5,4 +5,4 @@ from velociraptor.models.node import DocumentTreeNode
 
 @dataclass
 class Summary(DocumentTreeNode):
-    summary: str
+    text: str

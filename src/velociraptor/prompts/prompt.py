@@ -8,10 +8,12 @@ def extract_and_summarize_page_prompt() -> str:
         The extracted text and summary should be as complete and accurate as possible.  Remain faithful to the contents of the image. 
         Do not make up or add any additional content.  Attempt to preserve important or unique keywords and names in the summary 
         as this information will be indexed for both keyword and semantic search.
+        
+        Do not provide any superfluous expository narrative.  Limit your response to the requested summary.
     """
 
 def summarize_summaries_prompt(*summaries: Summary) -> str:
-    summaries_text = [f"Summary #{idx+1}\n{s.summary}\n\n" for idx, s in enumerate(summaries)]
+    summaries_text = [f"Summary #{idx+1}\n{s.text}\n\n" for idx, s in enumerate(summaries)]
     return f"""
         You are given several summaries of sequential portions of a document. 
         Your task is to faithfully synthesize these summaries into a single summary. 
@@ -19,6 +21,8 @@ def summarize_summaries_prompt(*summaries: Summary) -> str:
         However, do not take liberties or make up information.  Adhere to the information you are provided. 
         Attempt to preserve important or unique keywords and names in the summary as this information will be indexed for 
         both keyword and semantic search.
+        
+        Do not provide any superfluous expository narrative.  Limit your response to the requested summary.
         
         {summaries_text}
     """

@@ -1,8 +1,9 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import mimetypes
 import re
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 from velociraptor.db.neo4j import Neo4jDb
 from velociraptor.models.document import Document
@@ -13,7 +14,6 @@ from velociraptor.summarize.summarize import summarize_summaries, extract_and_su
 from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
-load_dotenv()
 db = Neo4jDb()
 
 def sanitize_folder_name(filename: str) -> str:
@@ -28,7 +28,7 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
     if len(summaries) < 4:
         # base case, we've reached the root doc
         summary = summarize_summaries(*summaries, position=0)
-        doc.summary = summary.summary
+        doc.text = summary.text
         doc.height = summary.height
         logger.info(f"Summarized root document layer {doc.height}.")
         db.save_document(doc, summaries)
@@ -82,7 +82,7 @@ def process_documents_folder() -> None:
         output_folder.mkdir(parents=True, exist_ok=True)
 
         doc = Document(
-            summary="", # not yet known
+            text="", # not yet known
             height=-1,  # not yet known
             position=0,
             file_path=f"files/documents/${file_path.name}",
@@ -102,7 +102,7 @@ def process_documents_folder() -> None:
                 file_path=str(page_path),
                 file_name=page_path.stem,
                 mime_type="image/jpeg",
-                full_text="",
+                text="",
             )
             page, summary = extract_and_summarize_page(page)
             prior_page = pages[-1] if pages else None

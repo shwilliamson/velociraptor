@@ -35,14 +35,14 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
     )
     response = llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
     response_obj = PageTextResponse.model_validate_json(response)
-    page.full_text = response_obj.full_text
+    page.text = response_obj.full_text
     page.has_graphics = response_obj.has_graphics
     page.has_tabular_data = response_obj.has_tabular_data
     summary = Summary(
         document_uuid=page.document_uuid,
         height=page.height + 1,
         position=page.position,
-        summary=response_obj.summary
+        text=response_obj.summary
     )
     return page, summary
 
@@ -53,5 +53,5 @@ def summarize_summaries(*summaries: Summary, position: int) -> Summary:
         document_uuid=summaries[0].document_uuid,
         height=summaries[0].height + 1,
         position=position,
-        summary=response
+        text=response
     )
