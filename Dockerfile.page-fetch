@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY pyproject.toml README.md .
+RUN pip install -e .
+
+# Copy source code
+COPY src/ src/
+
+# Set environment variables
+ENV PYTHONPATH=/app/src
+
+# Run the MCP server directly
+CMD ["python", "-m", "velociraptor.mcp.page_fetch_mcp"]

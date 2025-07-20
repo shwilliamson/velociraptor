@@ -29,3 +29,14 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
+
+  page-fetch:
+    build:
+      context: .
+      dockerfile: Dockerfile.page-fetch
+    image: velociraptor/page-fetch:latest
+    volumes:
+      - ./files/documents_split:/app/files/documents_split:ro
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

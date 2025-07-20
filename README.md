@@ -119,14 +119,6 @@ Velociraptor is designed to work with MCP (Model Context Protocol) clients like 
 
 To enable full agentic search functionality, configure these MCP servers in your MCP client:
 
-#### Docker Image Download
-
-First, pull the required Docker image for the filesystem MCP server:
-
-```bash
-docker pull mcp/filesystem
-```
-
 #### 1. Neo4j MCP Server
 
 Add to your MCP client configuration:
@@ -150,30 +142,36 @@ Add to your MCP client configuration:
 }
 ```
 
-#### 2. File System MCP Server
+#### 2. Page Fetch MCP Server
 
-For accessing page images and document metadata:
+For accessing page images (JPG format) when text extraction may be insufficient for graphics, charts, tables, or diagrams:
+
+```bash
+# Build the Docker image for the page fetch MCP server
+docker-compose build page-fetch
+```
+
+Add to your MCP client configuration:
 
 ```json
 {
   "mcpServers": {
-    "filesystem": {
+    "page-fetch": {
       "command": "docker",
       "args": [
         "run",
-        "-i",
         "--rm",
+        "-i",
         "--mount",
-        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/velociraptor,ro",
-        "mcp/filesystem",
-        "/projects"
+        "type=bind,src=/path/to/your/checkout/velociraptor/files/documents_split,dst=/app/files/documents_split,ro",
+        "velociraptor/page-fetch:latest"
       ]
     }
   }
 }
 ```
 
-**Purpose**: Access original page images (JPG format) when text extraction may be insufficient for graphics, charts, tables, or diagrams. Essential for visual verification and displaying page images to users upon request.
+**Purpose**: Safely fetch page images as base64 from the documents_split/*/pages folders. Essential for visual verification and displaying page images to users upon request.
 
 #### 3. Semantic Search MCP Server
 
@@ -252,16 +250,15 @@ Edit your Claude Desktop configuration file:
           "neo4j_password"
       ]
     },
-    "filesystem": {
+    "page-fetch": {
       "command": "docker",
       "args": [
         "run",
-        "-i",
         "--rm",
+        "-i",
         "--mount",
-        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/velociraptor,ro",
-        "mcp/filesystem",
-        "/projects"
+        "type=bind,src=/path/to/your/checkout/velociraptor/files/documents_split,dst=/app/files/documents_split,ro",
+        "velociraptor/page-fetch:latest"
       ]
     },
     "semantic-search": {
@@ -297,7 +294,6 @@ The AI agent can:
 - Query the knowledge graph for semantic relationships
 - Navigate document hierarchies intelligently
 - Combine multiple search strategies ("hunting in packs")
-- Access original document metadata and page images
 - Provide contextual results with complete source attribution
 - Work with subtle Jurassic Park personality while maintaining professionalism
 
