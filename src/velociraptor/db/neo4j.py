@@ -24,10 +24,17 @@ class Neo4jDb:
         uri = os.getenv("NEO4J_URI")
         username = os.getenv("NEO4J_USERNAME")
         password = os.getenv("NEO4J_PASSWORD")
+        logger.info(f"Neo4j connection config: URI={uri}, Username={username}")
         if self._driver is None:
             if not all([uri, username, password]):
                 raise ValueError("Neo4j connection details not found in environment variables")
-            self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
+            try:
+                logger.info(f"Creating Neo4j driver with URI: {uri}")
+                self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
+                logger.info("Neo4j driver created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Neo4j driver: {e}", exc_info=True)
+                raise
         return self._driver
 
     async def save_node(self, node: T) -> str:
@@ -135,10 +142,17 @@ class Neo4jDb:
         ORDER BY score DESC
         """
         
-        async with self.driver.session() as session:
-            result = await session.run(cypher_query, limit=limit, query_vector=query_vector)
-            records = await result.data()
-            return records
+        try:
+            logger.info("Opening Neo4j session for semantic search")
+            async with self.driver.session() as session:
+                logger.info("Running semantic search query")
+                result = await session.run(cypher_query, limit=limit, query_vector=query_vector)
+                records = await result.data()
+                logger.info(f"Found {len(records)} search results")
+                return records
+        except Exception as e:
+            logger.error(f"Semantic search failed: {e}", exc_info=True)
+            raise
 
     async def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""

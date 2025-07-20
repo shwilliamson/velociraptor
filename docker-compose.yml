@@ -25,7 +25,7 @@ services:
       dockerfile: Dockerfile.semantic-search
     image: velociraptor/semantic-search:latest
     env_file:
-      - .env
+      - .env.docker
     restart: unless-stopped
     stdin_open: true
     tty: true

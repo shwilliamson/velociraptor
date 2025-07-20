@@ -65,7 +65,10 @@ pip install -e .
 
 ```bash
 cp env.example .env
-# Edit .env and add your GEMINI_API_KEY
+# Edit and add secret values
+
+cp env.docker.example .env.docker
+# Edit and add secret values
 ```
 
 ### 4. Start Neo4j Database
@@ -195,7 +198,7 @@ Add to your MCP client configuration:
         "--rm",
         "-i",
         "--env-file",
-        "/path/to/your/checkout/velociraptor/.env",
+        "/path/to/your/checkout/velociraptor/.env.docker",
         "velociraptor/semantic-search:latest"
       ]
     }
@@ -268,7 +271,7 @@ Edit your Claude Desktop configuration file:
         "--rm",
         "-i",
         "--env-file",
-        "/path/to/your/checkout/velociraptor/.env",
+        "/path/to/your/checkout/velociraptor/.env.docker",
         "velociraptor/semantic-search:latest"
       ]
     }
