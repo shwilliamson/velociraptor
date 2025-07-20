@@ -6,7 +6,6 @@ from dotenv import load_dotenv
 
 from velociraptor.db.neo4j import Neo4jDb
 from velociraptor.models.document import Document
-from velociraptor.models.edge import EdgeType
 from velociraptor.models.page import Page
 from velociraptor.models.summary import Summary
 from velociraptor.split.pdf import split_pdf_to_images
@@ -32,9 +31,7 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         doc.summary = summary.summary
         doc.height = summary.height
         logger.info(f"Summarized root document layer {doc.height}.")
-        db.save_node(doc)
-        for s in summaries:
-            db.create_edge(doc, s, EdgeType.SUMMARIZES)
+        db.save_document(doc, summaries)
         return
 
     i = 0
@@ -46,17 +43,14 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
             else summaries[i:]
         new_summary = summarize_summaries(*batch, position=len(new_summaries))
         i += 2  # Move by 2 to create overlap
-
+        prior_summary = new_summaries[-1] if new_summaries else None
+        db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
         new_summaries.append(new_summary)
-        db.save_node(new_summary)
-        if new_summaries and len(new_summaries) > 1:
-            db.link(new_summaries[-2], new_summaries[-1])
-        for b in batch:
-            db.create_edge(new_summary, b, EdgeType.SUMMARIZES)
 
     logger.info(f"Summarized layer {new_summaries[0].height}.")
     # Recursively process the new layer
     summarize_layer(new_summaries, doc)
+
 
 def process_documents_folder() -> None:
     project_root = Path(__file__).parent.parent.parent.parent
@@ -72,7 +66,6 @@ def process_documents_folder() -> None:
         documents_split_path.mkdir(parents=True, exist_ok=True)
     
     logger.info(f"Processing documents in: {documents_path}")
-
     for file_path in documents_path.iterdir():
         if not file_path.is_file():
             continue
@@ -89,14 +82,14 @@ def process_documents_folder() -> None:
         output_folder.mkdir(parents=True, exist_ok=True)
 
         doc = Document(
-            summary="UNKNOWN", # not yet known
+            summary="", # not yet known
             height=-1,  # not yet known
             position=0,
             file_path=f"files/documents/${file_path.name}",
             file_name=file_path.stem,
             mime_type=mime_type
         )
-        db.save_node(doc)
+        db.save_document(doc)
 
         pages = []
         summaries = []
@@ -112,17 +105,12 @@ def process_documents_folder() -> None:
                 full_text="",
             )
             page, summary = extract_and_summarize_page(page)
-            db.save_node(page)
-            db.create_edge(doc, page, EdgeType.CONTAINS)
-            db.create_edge(page, doc, EdgeType.PART_OF)
-            if pages:
-                db.link(pages[-1], page)
+            prior_page = pages[-1] if pages else None
+            db.save_page(page, doc, prior_page)
             pages.append(page)
 
-            db.save_node(summary)
-            db.create_edge(summary, page, EdgeType.SUMMARIZES)
-            if summaries:
-                db.link(summaries[-1], summary)
+            prior_summary = summaries[-1] if summaries else None
+            db.save_page_summary(summary, page, prior_summary)
             summaries.append(summary)
 
         summarize_layer(summaries, doc)

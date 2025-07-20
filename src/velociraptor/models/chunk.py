@@ -7,3 +7,4 @@ from velociraptor.models.node import Node
 class Chunk(Node):
     text: str
     embedding: list[float]
+    sequence: int

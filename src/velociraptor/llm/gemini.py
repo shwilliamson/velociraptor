@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Optional
+from typing import Optional, Generator
 
 from google import genai
 from google.genai.types import Part, GenerateContentConfig
@@ -63,28 +63,32 @@ class Gemini:
             logger.error(f"Error generating content with Gemini: {e}", exc_info=True)
             raise
 
-    def embed(self, text_chunks: list[str]) -> list[Chunk]:
+    def embed(self, text_chunks: list[str]) -> Generator[Chunk, None, None]:
         """
         Generate embeddings for the given text using Gemini's embedding model.
         
         Args:
             text_chunks: The text to embed
             
-        Returns:
-            A list of Chunk objects with text and embedding
+        Yields:
+            Chunk objects with text and embedding
         """
         try:
-            response = self.client.models.embed_content(
-                model='gemini-embedding-001',
-                contents=text_chunks
-            )
+            chunk_sequence = 0
+            batch_size = 20
             
-            chunks = []
-            for text, embedding in zip(text_chunks, response.embeddings):
-                vector = embedding.values if embedding.values else []
-                chunks.append(Chunk(text=text, embedding=vector))
-            
-            return chunks
+            for i in range(0, len(text_chunks), batch_size):
+                batch = text_chunks[i:i + batch_size]
+                
+                response = self.client.models.embed_content(
+                    model='gemini-embedding-001',
+                    contents=batch
+                )
+
+                for text, embedding in zip(batch, response.embeddings):
+                    vector = embedding.values if embedding.values else []
+                    yield Chunk(text=text, embedding=vector, sequence=chunk_sequence)
+                    chunk_sequence += 1
             
         except Exception as e:
             logger.error(f"Error generating embeddings with Gemini: {e}", exc_info=True)

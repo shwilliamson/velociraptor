@@ -1,8 +1,14 @@
 from neo4j import GraphDatabase
-from typing import TypeVar
+from typing import TypeVar, Optional
 from dataclasses import fields
+
+from velociraptor.models.chunk import Chunk
+from velociraptor.models.document import Document
 from velociraptor.models.node import Node
 from velociraptor.models.edge import EdgeType
+from velociraptor.models.page import Page
+from velociraptor.models.summary import Summary
+from velociraptor.split.text import chunk_and_embed
 
 T = TypeVar('T', bound=Node)
 
@@ -69,5 +75,43 @@ class Neo4jDb:
         self.create_edge(previous_node, next_node, EdgeType.NEXT)
         self.create_edge(next_node, previous_node, EdgeType.PREVIOUS)
 
+    def save_chunk(self, chunk: Chunk, parent: Node):
+        self.save_node(chunk)
+        self.create_edge(chunk, parent, EdgeType.PART_OF)
+
+    def save_page(self, page: Page, doc: Document, prior_page: Optional[Page]):
+        self.save_node(page)
+        self.create_edge(doc, page, EdgeType.CONTAINS)
+        self.create_edge(page, doc, EdgeType.PART_OF)
+        for c in chunk_and_embed(page.full_text):
+            self.save_chunk(c, page)
+        if prior_page:
+            self.link(prior_page, page)
+
+    def save_page_summary(self, summary: Summary, page: Page, prior_summary: Optional[Summary]):
+        self.save_node(summary)
+        for c in chunk_and_embed(summary.summary):
+            self.save_chunk(c, summary)
+        self.create_edge(summary, page, EdgeType.SUMMARIZES)
+        if prior_summary:
+            self.link(prior_summary, summary)
+
+    def save_summary(self, summary: Summary, prior_summary: Optional[Summary], child_summaries: list[Summary]):
+        self.save_node(summary)
+        for c in chunk_and_embed(summary.summary):
+            self.save_chunk(c, summary)
+        if prior_summary:
+            self.link(prior_summary, summary)
+        for child in child_summaries:
+            self.create_edge(summary, child, EdgeType.SUMMARIZES)
+
+    def save_document(self, doc: Document, summaries: list[Summary]):
+        self.save_node(doc)
+        for c in chunk_and_embed(doc.summary):
+            self.save_chunk(c, doc)
+        for s in summaries:
+            self.create_edge(doc, s, EdgeType.SUMMARIZES)
+
     def create_indexes(self):
+        fixme
         pass
