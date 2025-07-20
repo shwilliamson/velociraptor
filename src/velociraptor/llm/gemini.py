@@ -55,7 +55,7 @@ class Gemini:
                 response_json_schema=response_json_schema
             ) if response_json_schema else None
 
-            response = await self.client.amodels.generate_content(
+            response = await self.client.aio.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
                 config=config
@@ -88,7 +88,7 @@ class Gemini:
             for i in range(0, len(text_chunks), batch_size):
                 batch = text_chunks[i:i + batch_size]
                 
-                response = await self.client.amodels.embed_content(
+                response = await self.client.aio.models.embed_content(
                     model='gemini-embedding-001',
                     contents=batch
                 )

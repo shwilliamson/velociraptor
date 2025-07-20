@@ -99,7 +99,7 @@ async def process_documents_folder() -> None:
 
         # Collect all pages first
         page_paths = list(split_pdf_to_images(file_path, output_folder))
-        page_data = []
+        page_nodes = []
         for idx, page_path in enumerate(page_paths):
             page = Page(
                 document_uuid=doc.uuid,
@@ -110,14 +110,14 @@ async def process_documents_folder() -> None:
                 mime_type="image/jpeg",
                 text="",
             )
-            page_data.append(page)
+            page_nodes.append(page)
 
         # Process in batches
         pages = []
         summaries = []
-        for i in range(0, len(page_data), BATCH_SIZE):
-            batch = page_data[i:i + BATCH_SIZE]
-            logger.info(f"Processing batch {i // BATCH_SIZE + 1}/{(len(page_data) + BATCH_SIZE - 1) // BATCH_SIZE} with {len(batch)} pages")
+        for i in range(0, len(page_nodes), BATCH_SIZE):
+            batch = page_nodes[i:i + BATCH_SIZE]
+            logger.info(f"Processing batch {i // BATCH_SIZE + 1}/{(len(page_nodes) + BATCH_SIZE - 1) // BATCH_SIZE} with {len(batch)} pages")
             
             # Process batch in parallel
             batch_tasks = [extract_and_summarize_page(page) for page in batch]

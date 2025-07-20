@@ -23,7 +23,9 @@ async def extract_and_summarize_page(page: Page) -> (Page, Summary):
             Describe any graphics or tabular data in detail so that the information they convey visually is captured in text. 
             Attempt to preserve important or unique keywords and names that could be vital search terms.
         """)
-        page_number: int = Field(description="The page number of this page in the document.")
+        page_number: int = Field(description="The page number of this page in the document if explicitly numbered. "
+                                             "Otherwise leave blank or return -1",
+                                 default=-1)
         has_graphics: bool = Field(description="""
             Indicate whether this page has information represented in graphic form. 
             This could be charts, graphs, pictures, images, drawings, or other forms.
