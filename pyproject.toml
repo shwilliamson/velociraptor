@@ -9,7 +9,10 @@ authors = [
 ]
 dependencies = [
     "PyMuPDF>=1.23.0",
-    "neo4j~=5.28.1"
+    "neo4j~=5.28.1",
+    "google-genai>=1.26.0",
+    "python-dotenv>=1.1.1",
+    "pydantic>=2.11.7"
 ]
 
 [project.optional-dependencies]

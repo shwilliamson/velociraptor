@@ -2,17 +2,19 @@ import mimetypes
 import re
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from velociraptor.db.neo4j import Neo4jDb
 from velociraptor.models.document import Document
 from velociraptor.models.edge import EdgeType
 from velociraptor.models.page import Page
 from velociraptor.models.summary import Summary
 from velociraptor.split.pdf import split_pdf_to_images
-from velociraptor.summarize.summarize import summarize_page, summarize_summaries
+from velociraptor.summarize.summarize import summarize_summaries, extract_and_summarize_page
 from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
-
+load_dotenv()
 db = Neo4jDb()
 
 def sanitize_folder_name(filename: str) -> str:
@@ -24,7 +26,7 @@ def sanitize_folder_name(filename: str) -> str:
 
 def summarize_layer(summaries: list[Summary], doc: Document) -> None:
     """Recursively summarizes layers of summaries up to the root document."""
-    if len(summaries) < 3:
+    if len(summaries) < 4:
         # base case, we've reached the root doc
         summary = summarize_summaries(*summaries, position=0)
         doc.summary = summary.summary
@@ -35,8 +37,8 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         return
 
     new_summaries = []
-    # Process summaries in overlapping batches of 3
     i = 0
+    # Process summaries in overlapping batches of 3
     while i < len(summaries):
         batch = summaries[i:i+3] \
             if i + 2 < len(summaries) \
@@ -51,9 +53,8 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         for b in batch:
             db.create_edge(new_summary, b, EdgeType.SUMMARIZES)
     
-    # Recursively process the new layer if we have enough summaries
-    if len(new_summaries) >= 3:
-        summarize_layer(new_summaries, doc)
+    # Recursively process the new layer
+    summarize_layer(new_summaries, doc)
 
 def process_documents_folder() -> None:
     project_root = Path(__file__).parent.parent.parent.parent
@@ -75,16 +76,6 @@ def process_documents_folder() -> None:
             continue
         
         mime_type, _ = mimetypes.guess_type(file_path)
-        doc = Document(
-            summary="UNKNOWN", # not yet known
-            height=-1,  # not yet known
-            position=0,
-            file_path=f"files/documents/${file_path.name}",
-            file_name=file_path.stem,
-            mime_type=mime_type
-        )
-        db.save_node(doc)
-
         if mime_type != "application/pdf":
             logger.warning(f"Skipping {file_path} of type {mime_type}")
             continue
@@ -95,6 +86,16 @@ def process_documents_folder() -> None:
         logger.info(f"Creating output folder: {output_folder}")
         output_folder.mkdir(parents=True, exist_ok=True)
 
+        doc = Document(
+            summary="UNKNOWN", # not yet known
+            height=-1,  # not yet known
+            position=0,
+            file_path=f"files/documents/${file_path.name}",
+            file_name=file_path.stem,
+            mime_type=mime_type
+        )
+        db.save_node(doc)
+
         pages = []
         summaries = []
         for idx, page_path in enumerate(split_pdf_to_images(file_path, output_folder)):
@@ -103,16 +104,17 @@ def process_documents_folder() -> None:
                 document_uuid=doc.uuid,
                 height=0,
                 position=idx,
-                file_path=f"files/documents/page/${page_path.name}",
+                file_path=str(page_path),
                 file_name=page_path.stem,
-                mime_type="image/jpeg"
+                mime_type="image/jpeg",
+                full_text="",
             )
+            page, summary = extract_and_summarize_page(page)
             db.save_node(page)
             if pages:
                 db.link(pages[-1], page)
             pages.append(page)
 
-            summary = summarize_page(page)
             db.save_node(summary)
             db.create_edge(summary, page, EdgeType.SUMMARIZES)
             if summaries:
