@@ -1,6 +1,6 @@
 # Velociraptor
 
-An intelligent document processing system that transforms PDF documents into a searchable knowledge graph using AI-powered extraction and hierarchical summarization.
+An intelligent document processing system that transforms PDF documents into a searchable knowledge graph using AI-powered extraction and hierarchical summarization. Named after the clever, systematic hunters from Jurassic Park, Velociraptor intelligently tracks and retrieves information from your document collections.
 
 ## Overview
 
@@ -138,7 +138,7 @@ Add to your MCP client configuration:
 
 #### 2. File System MCP Server
 
-For accessing processed document metadata:
+For accessing page images and document metadata:
 
 ```json
 {
@@ -150,6 +150,8 @@ For accessing processed document metadata:
   }
 }
 ```
+
+**Purpose**: Access original page images (JPG format) when text extraction may be insufficient for graphics, charts, tables, or diagrams. Essential for visual verification and displaying page images to users upon request.
 
 ### Claude Desktop Configuration
 
@@ -195,9 +197,19 @@ With MCP servers configured, you can perform sophisticated searches like:
 The AI agent can:
 - Query the knowledge graph for semantic relationships
 - Navigate document hierarchies intelligently
-- Combine multiple search strategies
-- Access original document metadata
-- Provide contextual results with source tracing
+- Combine multiple search strategies ("hunting in packs")
+- Access original document metadata and page images
+- Provide contextual results with complete source attribution
+- Work with subtle Jurassic Park personality while maintaining professionalism
+
+### Source Attribution
+
+Every response includes complete source citations with:
+- Document titles and UUIDs for file access
+- Specific page numbers when content comes from particular pages  
+- Structured citations that enable immediate file opening when requested
+
+**Example**: `[Document: "Q3 Financial Report", Page 12 (UUID: doc-456-789)]`
 
 ## Database Schema
 
