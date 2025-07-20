@@ -21,11 +21,10 @@ class Neo4jDb:
 
     @property
     def driver(self):
-        uri = os.getenv("NEO4J_URI")
-        username = os.getenv("NEO4J_USERNAME")
-        password = os.getenv("NEO4J_PASSWORD")
-        logger.info(f"Neo4j connection config: URI={uri}, Username={username}")
         if self._driver is None:
+            uri = os.getenv("NEO4J_URI")
+            username = os.getenv("NEO4J_USERNAME")
+            password = os.getenv("NEO4J_PASSWORD")
             if not all([uri, username, password]):
                 raise ValueError("Neo4j connection details not found in environment variables")
             try:
