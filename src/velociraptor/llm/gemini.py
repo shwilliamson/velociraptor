@@ -6,6 +6,7 @@ from google import genai
 from google.genai.types import Part, GenerateContentConfig
 
 from velociraptor.models.attachment import Attachment
+from velociraptor.models.chunk import Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -62,23 +63,28 @@ class Gemini:
             logger.error(f"Error generating content with Gemini: {e}", exc_info=True)
             raise
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text_chunks: list[str]) -> list[Chunk]:
         """
         Generate embeddings for the given text using Gemini's embedding model.
         
         Args:
-            text: The text to embed
+            text_chunks: The text to embed
             
         Returns:
-            A list of floats representing the embedding vector
+            A list of Chunk objects with text and embedding
         """
         try:
             response = self.client.models.embed_content(
                 model='gemini-embedding-001',
-                contents=[text]
+                contents=text_chunks
             )
             
-            return response.embedding
+            chunks = []
+            for text, embedding in zip(text_chunks, response.embeddings):
+                vector = embedding.values if embedding.values else []
+                chunks.append(Chunk(text=text, embedding=vector))
+            
+            return chunks
             
         except Exception as e:
             logger.error(f"Error generating embeddings with Gemini: {e}", exc_info=True)
