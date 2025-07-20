@@ -68,3 +68,6 @@ class Neo4jDb:
     def link(self, previous_node: Node, next_node: Node) -> None:
         self.create_edge(previous_node, next_node, EdgeType.NEXT)
         self.create_edge(next_node, previous_node, EdgeType.PREVIOUS)
+
+    def create_indexes(self):
+        pass

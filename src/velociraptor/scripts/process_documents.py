@@ -31,13 +31,14 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         summary = summarize_summaries(*summaries, position=0)
         doc.summary = summary.summary
         doc.height = summary.height
+        logger.info(f"Summarized root document layer {doc.height}.")
         db.save_node(doc)
         for s in summaries:
             db.create_edge(doc, s, EdgeType.SUMMARIZES)
         return
 
-    new_summaries = []
     i = 0
+    new_summaries: list[Summary] = []
     # Process summaries in overlapping batches of 3
     while i < len(summaries):
         batch = summaries[i:i+3] \
@@ -52,7 +53,8 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
             db.link(new_summaries[-2], new_summaries[-1])
         for b in batch:
             db.create_edge(new_summary, b, EdgeType.SUMMARIZES)
-    
+
+    logger.info(f"Summarized layer {new_summaries[0].height}.")
     # Recursively process the new layer
     summarize_layer(new_summaries, doc)
 
@@ -111,6 +113,8 @@ def process_documents_folder() -> None:
             )
             page, summary = extract_and_summarize_page(page)
             db.save_node(page)
+            db.create_edge(doc, page, EdgeType.CONTAINS)
+            db.create_edge(page, doc, EdgeType.PART_OF)
             if pages:
                 db.link(pages[-1], page)
             pages.append(page)
@@ -122,6 +126,8 @@ def process_documents_folder() -> None:
             summaries.append(summary)
 
         summarize_layer(summaries, doc)
+
+    db.create_indexes()
 
 if __name__ == "__main__":
     process_documents_folder()

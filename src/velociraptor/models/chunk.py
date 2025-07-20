@@ -5,5 +5,5 @@ from velociraptor.models.node import Node
 
 @dataclass
 class Chunk(Node):
-    chunk: str
+    text: str
     embedding: list[float]

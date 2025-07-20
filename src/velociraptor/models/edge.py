@@ -7,3 +7,4 @@ class EdgeType(Enum):
     PREVIOUS = "PREVIOUS"
     SUMMARIZES = "SUMMARIZES"
     CONTAINS = "CONTAINS"
+    PART_OF = "PART_OF"

@@ -4,7 +4,7 @@ from velociraptor.llm.gemini import Gemini
 from velociraptor.models.attachment import Attachment
 from velociraptor.models.page import Page
 from velociraptor.models.summary import Summary
-from velociraptor.prompts.prompt import EXTRACT_AND_SUMMARIZE_PAGE_PROMPT, SUMMARIZE_SUMMARIES_PROMPT
+from velociraptor.prompts.prompt import extract_and_summarize_page_prompt, summarize_summaries_prompt
 
 llm = Gemini()
 
@@ -18,10 +18,11 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
             The full text on the page. Represent tabular data in markdown format.
         """)
         summary: str= Field(description="""
-            A complete and thorough summary of the contents of the page.  Describe any graphics or tabular data in detail.
+            A complete and thorough summary of the contents of the page.  
+            Describe any graphics or tabular data in detail so that the information they convey is captured.
         """)
         has_graphics: bool= Field(description="""
-            Indicate whether this page has information represented in graphic form.
+            Indicate whether this page has information represented in graphic form. 
             This could be charts, graphs, pictures, images, drawings, or other forms.
         """)
         has_tabular_data: bool= Field(description="""
@@ -32,7 +33,7 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
         file_path=page.file_path,
         mime_type=page.mime_type
     )
-    response = llm.prompt(EXTRACT_AND_SUMMARIZE_PAGE_PROMPT, [attach], PageTextResponse.model_json_schema())
+    response = llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
     response_obj = PageTextResponse.model_validate_json(response)
     page.full_text = response_obj.full_text
     page.has_graphics = response_obj.has_graphics
@@ -47,10 +48,10 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
 
 
 def summarize_summaries(*summaries: Summary, position: int) -> Summary:
-    response = llm.prompt(SUMMARIZE_SUMMARIES_PROMPT)
+    response = llm.prompt(summarize_summaries_prompt(*summaries))
     return Summary(
         document_uuid=summaries[0].document_uuid,
         height=summaries[0].height + 1,
         position=position,
-        summary = response
+        summary=response
     )

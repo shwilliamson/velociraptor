@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
 
-from velociraptor.models.node import Node
+from velociraptor.models.node import DocumentTreeNode
 
 
 @dataclass
-class Document(Node):
+class Document(DocumentTreeNode):
     summary: str
     file_name: str
     file_path: str

@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from velociraptor.models.node import Node
+from velociraptor.models.node import DocumentTreeNode
 
 
 @dataclass
-class Summary(Node):
+class Summary(DocumentTreeNode):
     summary: str
