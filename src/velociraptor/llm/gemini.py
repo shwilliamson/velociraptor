@@ -1,7 +1,8 @@
 import os
 import time
-from typing import Optional, Generator
+from typing import Optional, AsyncGenerator
 
+import aiofiles
 from google import genai
 from google.genai.types import Part, GenerateContentConfig
 
@@ -17,7 +18,7 @@ class Gemini:
         """Initialize Gemini LLM with API key."""
         self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-    def prompt(self, prompt: str, attachments: Optional[list[Attachment]] = None, response_json_schema: Optional[dict] = None) -> str:
+    async def prompt(self, prompt: str, attachments: Optional[list[Attachment]] = None, response_json_schema: Optional[dict] = None) -> str:
         """
         Submit a prompt with optional attachments to Gemini 2.5 Pro.
         
@@ -37,8 +38,8 @@ class Gemini:
             if attachments:
                 for attachment in attachments:
                     try:
-                        with open(attachment.file_path, 'rb') as f:
-                            file_data = f.read()
+                        async with aiofiles.open(attachment.file_path, 'rb') as f:
+                            file_data = await f.read()
 
                         file_part = Part.from_bytes(
                             data=file_data,
@@ -54,7 +55,7 @@ class Gemini:
                 response_json_schema=response_json_schema
             ) if response_json_schema else None
 
-            response = self.client.models.generate_content(
+            response = await self.client.amodels.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
                 config=config
@@ -68,7 +69,7 @@ class Gemini:
             logger.error(f"Error generating content with Gemini: {e}", exc_info=True)
             raise
 
-    def embed(self, text_chunks: list[str]) -> Generator[Chunk, None, None]:
+    async def embed(self, text_chunks: list[str]) -> AsyncGenerator[Chunk, None]:
         """
         Generate embeddings for the given text using Gemini's embedding model.
         
@@ -87,7 +88,7 @@ class Gemini:
             for i in range(0, len(text_chunks), batch_size):
                 batch = text_chunks[i:i + batch_size]
                 
-                response = self.client.models.embed_content(
+                response = await self.client.amodels.embed_content(
                     model='gemini-embedding-001',
                     contents=batch
                 )

@@ -17,5 +17,5 @@ class Node:
 class DocumentTreeNode(Node):
     """Base class for all Neo4j node models that are part of the document tree."""
     document_uuid: str
-    height: int # layer of the tree, with leaves being at 0
-    position: int # index at layer of tree
+    height: int # vertical layer of the tree, with leaves being at 0
+    position: int # index at lateral layer of tree

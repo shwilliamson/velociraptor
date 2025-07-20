@@ -9,7 +9,7 @@ from velociraptor.prompts.prompt import extract_and_summarize_page_prompt, summa
 llm = Gemini()
 
 
-def extract_and_summarize_page(page: Page) -> (Page, Summary):
+async def extract_and_summarize_page(page: Page) -> (Page, Summary):
     class PageTextResponse(BaseModel):
         """
         Pydantic model representing the output extracted from a document page.
@@ -36,7 +36,7 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
         file_path=page.file_path,
         mime_type=page.mime_type
     )
-    response = llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
+    response = await llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
     response_obj = PageTextResponse.model_validate_json(response)
     page.text = response_obj.full_text
     page.page_number = response_obj.page_number
@@ -51,8 +51,8 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
     return page, summary
 
 
-def summarize_summaries(*summaries: Summary, position: int) -> Summary:
-    response = llm.prompt(summarize_summaries_prompt(*summaries))
+async def summarize_summaries(*summaries: Summary, position: int) -> Summary:
+    response = await llm.prompt(summarize_summaries_prompt(*summaries))
     return Summary(
         document_uuid=summaries[0].document_uuid,
         height=summaries[0].height + 1,

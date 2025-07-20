@@ -1,6 +1,7 @@
 from dotenv import load_dotenv
 load_dotenv()
 
+import asyncio
 import mimetypes
 import re
 import time
@@ -16,6 +17,7 @@ from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
 db = Neo4jDb()
+BATCH_SIZE = 5
 
 def sanitize_folder_name(filename: str) -> str:
     """Replace illegal directory characters with underscores."""
@@ -24,15 +26,15 @@ def sanitize_folder_name(filename: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '_', name)
 
 
-def summarize_layer(summaries: list[Summary], doc: Document) -> None:
+async def summarize_layer(summaries: list[Summary], doc: Document) -> None:
     """Recursively summarizes layers of summaries up to the root document."""
     if len(summaries) < 4:
         # base case, we've reached the root doc
-        summary = summarize_summaries(*summaries, position=0)
+        summary = await summarize_summaries(*summaries, position=0)
         doc.text = summary.text
         doc.height = summary.height
         logger.info(f"Summarized root document layer {doc.height}.")
-        db.save_document(doc, summaries)
+        await db.save_document(doc, summaries)
         return
 
     i = 0
@@ -42,18 +44,18 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
         batch = summaries[i:i+3] \
             if i + 2 < len(summaries) \
             else summaries[i:]
-        new_summary = summarize_summaries(*batch, position=len(new_summaries))
+        new_summary = await summarize_summaries(*batch, position=len(new_summaries))
         i += 2  # Move by 2 to create overlap
         prior_summary = new_summaries[-1] if new_summaries else None
-        db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
+        await db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
         new_summaries.append(new_summary)
 
     logger.info(f"Summarized layer {new_summaries[0].height}.")
     # Recursively process the new layer
-    summarize_layer(new_summaries, doc)
+    await summarize_layer(new_summaries, doc)
 
 
-def process_documents_folder() -> None:
+async def process_documents_folder() -> None:
     start_time = time.time()
     logger.info("Starting document processing")
     
@@ -93,12 +95,12 @@ def process_documents_folder() -> None:
             file_name=file_path.stem,
             mime_type=mime_type
         )
-        db.save_document(doc)
+        await db.save_document(doc)
 
-        pages = []
-        summaries = []
-        for idx, page_path in enumerate(split_pdf_to_images(file_path, output_folder)):
-            logger.info(f"Processing page {idx} {page_path}")
+        # Collect all pages first
+        page_paths = list(split_pdf_to_images(file_path, output_folder))
+        page_data = []
+        for idx, page_path in enumerate(page_paths):
             page = Page(
                 document_uuid=doc.uuid,
                 height=0,
@@ -108,24 +110,38 @@ def process_documents_folder() -> None:
                 mime_type="image/jpeg",
                 text="",
             )
-            page, summary = extract_and_summarize_page(page)
-            prior_page = pages[-1] if pages else None
-            db.save_page(page, doc, prior_page)
-            pages.append(page)
+            page_data.append(page)
 
-            prior_summary = summaries[-1] if summaries else None
-            db.save_page_summary(summary, page, prior_summary)
-            summaries.append(summary)
+        # Process in batches
+        pages = []
+        summaries = []
+        for i in range(0, len(page_data), BATCH_SIZE):
+            batch = page_data[i:i + BATCH_SIZE]
+            logger.info(f"Processing batch {i // BATCH_SIZE + 1}/{(len(page_data) + BATCH_SIZE - 1) // BATCH_SIZE} with {len(batch)} pages")
+            
+            # Process batch in parallel
+            batch_tasks = [extract_and_summarize_page(page) for page in batch]
+            batch_results = await asyncio.gather(*batch_tasks)
+            
+            # Save results sequentially to maintain order
+            for page, (processed_page, summary) in zip(batch, batch_results):
+                prior_page = pages[-1] if pages else None
+                await db.save_page(processed_page, doc, prior_page)
+                pages.append(processed_page)
+
+                prior_summary = summaries[-1] if summaries else None
+                await db.save_page_summary(summary, processed_page, prior_summary)
+                summaries.append(summary)
 
         logger.info("Beginning to summarize hierarchical layers")
-        summarize_layer(summaries, doc)
+        await summarize_layer(summaries, doc)
         logger.info("Finished summarizing hierarchical layers")
 
-    db.create_indexes()
+    await db.create_indexes()
     
     end_time = time.time()
     processing_time_ms = int((end_time - start_time) * 1000)
     logger.info(f"Finished document processing in {processing_time_ms}ms")
 
 if __name__ == "__main__":
-    process_documents_folder()
+    asyncio.run(process_documents_folder())

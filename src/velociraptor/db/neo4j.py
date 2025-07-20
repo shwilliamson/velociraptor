@@ -1,4 +1,4 @@
-from neo4j import GraphDatabase
+from neo4j import AsyncGraphDatabase
 from typing import TypeVar, Optional
 from dataclasses import fields
 
@@ -26,10 +26,10 @@ class Neo4jDb:
         if self._driver is None:
             if not all([uri, username, password]):
                 raise ValueError("Neo4j connection details not found in environment variables")
-            self._driver = GraphDatabase.driver(uri, auth=(username, password))
+            self._driver = AsyncGraphDatabase.driver(uri, auth=(username, password))
         return self._driver
 
-    def save_node(self, node: T) -> str:
+    async def save_node(self, node: T) -> str:
         """Save a Node instance to Neo4j with its label and all field properties.
         
         Args:
@@ -52,11 +52,12 @@ class Neo4jDb:
         label = node.label
         cypher_query = f"MERGE (n:{label}:Searchable {{uuid: $props.uuid}}) SET n = $props RETURN n.uuid as uuid"
         
-        with self.driver.session() as session:
-            result = session.run(cypher_query, props=properties)
-            return result.single()["uuid"]
+        async with self.driver.session() as session:
+            result = await session.run(cypher_query, props=properties)
+            record = await result.single()
+            return record["uuid"]
 
-    def create_edge(self, from_node: Node, to_node: Node, edge_type: EdgeType) -> None:
+    async def create_edge(self, from_node: Node, to_node: Node, edge_type: EdgeType) -> None:
         """Create a directional edge between two nodes in Neo4j.
         
         Args:
@@ -70,51 +71,51 @@ class Neo4jDb:
         MERGE (from_node)-[:{edge_type.value}]->(to_node)
         """
         
-        with self.driver.session() as session:
-            session.run(cypher_query, from_uuid=from_node.uuid, to_uuid=to_node.uuid)
+        async with self.driver.session() as session:
+            await session.run(cypher_query, from_uuid=from_node.uuid, to_uuid=to_node.uuid)
 
-    def link(self, previous_node: Node, next_node: Node) -> None:
-        self.create_edge(previous_node, next_node, EdgeType.NEXT)
-        self.create_edge(next_node, previous_node, EdgeType.PREVIOUS)
+    async def link(self, previous_node: Node, next_node: Node) -> None:
+        await self.create_edge(previous_node, next_node, EdgeType.NEXT)
+        await self.create_edge(next_node, previous_node, EdgeType.PREVIOUS)
 
-    def save_chunk(self, chunk: Chunk, parent: Node):
-        self.save_node(chunk)
-        self.create_edge(chunk, parent, EdgeType.PART_OF)
+    async def save_chunk(self, chunk: Chunk, parent: Node):
+        await self.save_node(chunk)
+        await self.create_edge(chunk, parent, EdgeType.PART_OF)
 
-    def save_page(self, page: Page, doc: Document, prior_page: Optional[Page]):
-        self.save_node(page)
-        self.create_edge(doc, page, EdgeType.CONTAINS)
-        self.create_edge(page, doc, EdgeType.PART_OF)
-        for c in chunk_and_embed(page.text):
-            self.save_chunk(c, page)
+    async def save_page(self, page: Page, doc: Document, prior_page: Optional[Page]):
+        await self.save_node(page)
+        await self.create_edge(doc, page, EdgeType.CONTAINS)
+        await self.create_edge(page, doc, EdgeType.PART_OF)
+        async for c in chunk_and_embed(page.text):
+            await self.save_chunk(c, page)
         if prior_page:
-            self.link(prior_page, page)
+            await self.link(prior_page, page)
 
-    def save_page_summary(self, summary: Summary, page: Page, prior_summary: Optional[Summary]):
-        self.save_node(summary)
-        for c in chunk_and_embed(summary.text):
-            self.save_chunk(c, summary)
-        self.create_edge(summary, page, EdgeType.SUMMARIZES)
+    async def save_page_summary(self, summary: Summary, page: Page, prior_summary: Optional[Summary]):
+        await self.save_node(summary)
+        async for c in chunk_and_embed(summary.text):
+            await self.save_chunk(c, summary)
+        await self.create_edge(summary, page, EdgeType.SUMMARIZES)
         if prior_summary:
-            self.link(prior_summary, summary)
+            await self.link(prior_summary, summary)
 
-    def save_summary(self, summary: Summary, prior_summary: Optional[Summary], child_summaries: list[Summary]):
-        self.save_node(summary)
-        for c in chunk_and_embed(summary.text):
-            self.save_chunk(c, summary)
+    async def save_summary(self, summary: Summary, prior_summary: Optional[Summary], child_summaries: list[Summary]):
+        await self.save_node(summary)
+        async for c in chunk_and_embed(summary.text):
+            await self.save_chunk(c, summary)
         if prior_summary:
-            self.link(prior_summary, summary)
+            await self.link(prior_summary, summary)
         for child in child_summaries:
-            self.create_edge(summary, child, EdgeType.SUMMARIZES)
+            await self.create_edge(summary, child, EdgeType.SUMMARIZES)
 
-    def save_document(self, doc: Document, summaries: list[Summary] = []):
-        self.save_node(doc)
-        for c in chunk_and_embed(doc.text):
-            self.save_chunk(c, doc)
+    async def save_document(self, doc: Document, summaries: list[Summary] = []):
+        await self.save_node(doc)
+        async for c in chunk_and_embed(doc.text):
+            await self.save_chunk(c, doc)
         for s in summaries:
-            self.create_edge(doc, s, EdgeType.SUMMARIZES)
+            await self.create_edge(doc, s, EdgeType.SUMMARIZES)
 
-    def create_indexes(self):
+    async def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
         logger.info("Creating indexes")
         index_queries = [
@@ -126,7 +127,7 @@ class Neo4jDb:
             "OPTIONS {indexConfig: {`vector.dimensions`: 3072, `vector.similarity_function`: 'cosine'}}"
         ]
         
-        with self.driver.session() as session:
+        async with self.driver.session() as session:
             for query in index_queries:
-                session.run(query)
+                await session.run(query)
         logger.info("Finished creating indexes")
