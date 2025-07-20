@@ -1,3 +1,4 @@
+import os
 from neo4j import AsyncGraphDatabase
 from typing import TypeVar, Optional
 from dataclasses import fields
@@ -20,9 +21,9 @@ class Neo4jDb:
 
     @property
     def driver(self):
-        uri = "neo4j://localhost:7687"
-        username = "neo4j"
-        password = "neo4j_password"
+        uri = os.getenv("NEO4J_URI")
+        username = os.getenv("NEO4J_USERNAME")
+        password = os.getenv("NEO4J_PASSWORD")
         if self._driver is None:
             if not all([uri, username, password]):
                 raise ValueError("Neo4j connection details not found in environment variables")
