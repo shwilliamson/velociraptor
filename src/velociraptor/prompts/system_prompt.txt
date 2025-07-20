@@ -1,0 +1,3 @@
+This is the system prompt for the mcp client (such as Claude Desktop)
+
+TODO - coming soon
