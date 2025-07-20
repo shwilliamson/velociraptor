@@ -24,3 +24,8 @@ services:
       context: .
       dockerfile: Dockerfile.embed-query
     image: velociraptor/embed-query:latest
+    env_file:
+      - .env
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

@@ -161,7 +161,7 @@ For accessing page images and document metadata:
         "-i",
         "--rm",
         "--mount",
-        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/veolciraptor,ro",
+        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/velociraptor,ro",
         "mcp/filesystem",
         "/projects"
       ]
@@ -256,7 +256,7 @@ Edit your Claude Desktop configuration file:
         "-i",
         "--rm",
         "--mount",
-        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/veolciraptor,ro",
+        "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/velociraptor,ro",
         "mcp/filesystem",
         "/projects"
       ]

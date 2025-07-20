@@ -4,7 +4,7 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent
+from mcp.types import Tool, TextContent, ServerCapabilities
 
 from velociraptor.llm.gemini import Gemini
 from velociraptor.utils.logger import get_logger
@@ -88,9 +88,8 @@ async def main():
             InitializationOptions(
                 server_name="embed-query",
                 server_version="1.0.0",
-                capabilities=server.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities=None,
+                capabilities=ServerCapabilities(
+                    tools={},
                 ),
             ),
         )
