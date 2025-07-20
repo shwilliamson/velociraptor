@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from typing import Optional, Generator
 
 from google import genai
@@ -29,6 +30,8 @@ class Gemini:
             The string response from the model
         """
         try:
+            start_time = time.time()
+            logger.info(f"Begin prompt")
             contents = [Part.from_text(text=prompt)]
             
             if attachments:
@@ -52,11 +55,13 @@ class Gemini:
             ) if response_json_schema else None
 
             response = self.client.models.generate_content(
-                model='gemini-2.5-pro',
+                model='gemini-2.5-flash',
                 contents=contents,
                 config=config
             )
-            
+
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"End prompt ({processing_time_ms}ms)")
             return response.text
             
         except Exception as e:
@@ -74,6 +79,8 @@ class Gemini:
             Chunk objects with text and embedding
         """
         try:
+            start_time = time.time()
+            logger.info(f"Begin embedding {len(text_chunks)} chunks")
             chunk_sequence = 0
             batch_size = 20
             
@@ -89,7 +96,9 @@ class Gemini:
                     vector = embedding.values if embedding.values else []
                     yield Chunk(text=text, embedding=vector, sequence=chunk_sequence)
                     chunk_sequence += 1
-            
+
+            processing_time_ms = int((time.time() - start_time) * 1000)
+            logger.info(f"End embedding {len(text_chunks)} chunks ({processing_time_ms}ms)")
         except Exception as e:
             logger.error(f"Error generating embeddings with Gemini: {e}", exc_info=True)
             raise

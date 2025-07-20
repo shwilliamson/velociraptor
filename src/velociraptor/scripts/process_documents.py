@@ -85,7 +85,7 @@ def process_documents_folder() -> None:
             text="", # not yet known
             height=-1,  # not yet known
             position=0,
-            file_path=f"files/documents/${file_path.name}",
+            file_path=str(file_path),
             file_name=file_path.stem,
             mime_type=mime_type
         )
@@ -94,7 +94,7 @@ def process_documents_folder() -> None:
         pages = []
         summaries = []
         for idx, page_path in enumerate(split_pdf_to_images(file_path, output_folder)):
-            logger.info(f"Processing page {idx}")
+            logger.info(f"Processing page {idx} {page_path}")
             page = Page(
                 document_uuid=doc.uuid,
                 height=0,

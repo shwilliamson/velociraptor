@@ -18,7 +18,7 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
             The full text on the page. Represent tabular data in markdown format.
         """)
         summary: str= Field(description="""
-            A complete and thorough summary of the contents of the page.  
+            A succinct yet thorough summary of the contents of the page.  
             Describe any graphics or tabular data in detail so that the information they convey is captured.
         """)
         has_graphics: bool= Field(description="""

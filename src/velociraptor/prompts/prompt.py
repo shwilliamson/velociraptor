@@ -17,8 +17,9 @@ def summarize_summaries_prompt(*summaries: Summary) -> str:
     return f"""
         You are given several summaries of sequential portions of a document. 
         Your task is to faithfully synthesize these summaries into a single summary. 
-        Ensure that the response you produce is thorough and complete and captures the key points from each input.
-        However, do not take liberties or make up information.  Adhere to the information you are provided. 
+        This is part of a summarization tree that aggregates low level, targeted summaries gradually up to higher level, broad summaries. 
+        Ensure that the response you produce is succinct yet thorough and captures the key points from each lower level summary.
+        However, do not take liberties or make up information. Adhere to the information you are provided. 
         Attempt to preserve important or unique keywords and names in the summary as this information will be indexed for 
         both keyword and semantic search.
         
