@@ -2,7 +2,6 @@ from pathlib import Path
 from typing import Union, Generator
 import fitz
 import shutil
-import base64
 
 from velociraptor.utils.logger import get_logger
 
@@ -76,16 +75,7 @@ def split_pdf_to_images(pdf_path: Union[str, Path], output_dir: Union[str, Path,
                 output_path = pages_dir / filename
                 pix.save(output_path, jpg_quality=50)
                 
-                # Save base64 encoded version from the saved JPG file
-                base64_filename = f"{page_num + 1:05d}.base64.txt"
-                base64_path = pages_dir / base64_filename
-                with open(output_path, 'rb') as img_file:
-                    img_bytes = img_file.read()
-                    base64_data = base64.b64encode(img_bytes).decode('utf-8')
-                with open(base64_path, 'w') as f:
-                    f.write(base64_data)
-                
-                logger.debug(f"Saved page {page_num + 1} as {filename} and {base64_filename}")
+                logger.debug(f"Saved page {page_num + 1} as {filename}")
                 yield output_path
             except Exception as e:
                 logger.error(f"Error processing page {page_num + 1} of '{pdf_path.name}': {e}", exc_info=True)

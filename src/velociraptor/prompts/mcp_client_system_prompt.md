@@ -90,13 +90,15 @@ The tool returns JSON with this structure:
 2. **Security**: Tool automatically validates paths are within allowed directories (files/documents_split/*/pages/)
 3. **Format**: Returns JPG page images encoded as base64 strings for display and analysis
 4. **Path translation**: Tool handles translation between host paths and container paths automatically
+5. **CRITICAL**: Carefully examine the base64 image contents after fetching - the visual page representation may contain essential graphics, charts, tables, or diagrams that provide crucial context not captured in text descriptions
 
 **Example Process**:
 ```
 1. Find a page with visual content: MATCH (p:Page) WHERE p.has_graphics = true RETURN p.file_path
 2. Use fetch_page_image tool with file_path: "/path/to/velociraptor/files/documents_split/doc/pages/00001.jpg"
 3. Receive base64 encoded image data for analysis and display
-4. Analyze charts, tables, diagrams that may not be fully captured in text extraction
+4. Carefully analyze the visual content in the image - charts, tables, diagrams that may not be fully captured in text extraction
+5. Use both text and visual information to provide comprehensive analysis
 ```
 
 **When to Use**:
@@ -104,6 +106,7 @@ The tool returns JSON with this structure:
 - Text extraction seems incomplete for visual elements
 - User requests to see actual page images
 - Verifying complex tabular data or technical diagrams
+- When visualizing the actual page with graphics and/or tabular data may provide helpful context that isn't captured in textual description
 
 ### Neo4j Queries
 Use Cypher queries to:
