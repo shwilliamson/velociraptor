@@ -3,6 +3,7 @@ load_dotenv()
 
 import mimetypes
 import re
+import time
 from pathlib import Path
 
 from velociraptor.db.neo4j import Neo4jDb
@@ -53,6 +54,9 @@ def summarize_layer(summaries: list[Summary], doc: Document) -> None:
 
 
 def process_documents_folder() -> None:
+    start_time = time.time()
+    logger.info("Starting document processing")
+    
     project_root = Path(__file__).parent.parent.parent.parent
     documents_path = project_root / "files" / "documents"
     documents_split_path = project_root / "files" / "documents_split"
@@ -116,6 +120,10 @@ def process_documents_folder() -> None:
         summarize_layer(summaries, doc)
 
     db.create_indexes()
+    
+    end_time = time.time()
+    processing_time_ms = int((end_time - start_time) * 1000)
+    logger.info(f"Finished document processing in {processing_time_ms}ms")
 
 if __name__ == "__main__":
     process_documents_folder()

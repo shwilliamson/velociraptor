@@ -9,8 +9,10 @@ from velociraptor.models.edge import EdgeType
 from velociraptor.models.page import Page
 from velociraptor.models.summary import Summary
 from velociraptor.split.text import chunk_and_embed
+from velociraptor.utils.logger import get_logger
 
 T = TypeVar('T', bound=Node)
+logger = get_logger(__name__)
 
 
 class Neo4jDb:
@@ -114,6 +116,7 @@ class Neo4jDb:
 
     def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
+        logger.info("Creating indexes")
         index_queries = [
             # Single fulltext index for all searchable content
             "CREATE FULLTEXT INDEX all_text_content IF NOT EXISTS FOR (s:Searchable) ON EACH [s.text]",
@@ -126,3 +129,4 @@ class Neo4jDb:
         with self.driver.session() as session:
             for query in index_queries:
                 session.run(query)
+        logger.info("Finished creating indexes")

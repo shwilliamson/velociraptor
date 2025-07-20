@@ -15,11 +15,13 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
         Pydantic model representing the output extracted from a document page.
         """
         full_text: str = Field(description="""
-            The full text on the page. Represent tabular data in markdown format.
+            The full text on the page. Represent the content in markdown format, especially tabular data. 
+            Remain faithful to the contents and layout of the page.
         """)
         summary: str= Field(description="""
             A succinct yet thorough summary of the contents of the page.  
-            Describe any graphics or tabular data in detail so that the information they convey is captured.
+            Describe any graphics or tabular data in detail so that the information they convey visually is captured in text. 
+            Attempt to preserve important or unique keywords and names that could be vital search terms.
         """)
         has_graphics: bool= Field(description="""
             Indicate whether this page has information represented in graphic form. 
