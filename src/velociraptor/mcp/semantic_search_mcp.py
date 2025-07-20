@@ -71,19 +71,29 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         # Perform semantic search in Neo4j
         results = await neo4j_db.semantic_search(embedding, limit)
         
-        # Format results as readable text
+        # Return results directly as JSON
+        import json
+        
         if not results:
-            response_text = "No matching documents found."
+            response_text = json.dumps({"message": "No matching documents found", "results": []})
         else:
-            response_parts = []
-            for i, result in enumerate(results, 1):
-                response_parts.append(f"Result {i} (Score: {result['score']:.4f}):")
-                response_parts.append(f"Text: {result['text']}")
-                response_parts.append(f"Chunk ID: {result['chunk_id']}")
-                response_parts.append(f"Parent: {result['parent_labels']} - {result['parent_id']}")
-                response_parts.append("")  # Empty line between results
+            # Convert Neo4j nodes to serializable format
+            serializable_results = []
+            for result in results:
+                parent = result['parent']
+                score = result['score']
+                
+                # Convert node to dict
+                node_dict = dict(parent)
+                node_dict['_id'] = parent.element_id if hasattr(parent, 'element_id') else None
+                node_dict['_labels'] = list(parent.labels) if hasattr(parent, 'labels') else []
+                
+                serializable_results.append({
+                    'parent': node_dict,
+                    'score': score
+                })
             
-            response_text = "\n".join(response_parts)
+            response_text = json.dumps({"results": serializable_results}, indent=2)
         
         return [
             TextContent(

@@ -137,9 +137,9 @@ class Neo4jDb:
         CALL db.index.vector.queryNodes('chunk_embedding_vector', $limit, $query_vector)
         YIELD node, score
         MATCH (node)-[:PART_OF]->(parent)
-        RETURN node.text as text, node.uuid as chunk_id, score, 
-               parent.uuid as parent_id, labels(parent) as parent_labels
-        ORDER BY score DESC
+        WITH parent, MAX(score) as top_score
+        RETURN DISTINCT parent, top_score as score
+        ORDER BY top_score DESC
         """
         
         try:
