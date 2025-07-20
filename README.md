@@ -172,6 +172,61 @@ For accessing page images and document metadata:
 
 **Purpose**: Access original page images (JPG format) when text extraction may be insufficient for graphics, charts, tables, or diagrams. Essential for visual verification and displaying page images to users upon request.
 
+#### 3. Embed Query MCP Server
+
+**REQUIRED**: This server must be running to enable semantic search functionality by embedding queries with the same model used for document embeddings.
+
+The embed query MCP server is now available as a Docker container. **You must build the Docker image first:**
+
+```bash
+# Build the Docker image for the embed query MCP server
+docker-compose build embed-query
+```
+
+Add to your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "embed-query": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/your/checkout/velociraptor/.env",
+        "velociraptor/embed-query:latest"
+      ]
+    }
+  }
+}
+```
+
+Alternatively, you can still run it directly with Python if preferred:
+
+```bash
+# Alternative: Start the embed query MCP server directly
+python -m src.velociraptor.mcp.embed_query_mcp_server
+```
+
+```json
+{
+  "mcpServers": {
+    "embed-query": {
+      "command": "python",
+      "args": [
+        "-m",
+        "src.velociraptor.mcp.embed_query_mcp_server"
+      ],
+      "cwd": "/path/to/your/checkout/velociraptor"
+    }
+  }
+}
+```
+
+**Purpose**: Embeds search queries using the same Gemini embedding model (`gemini-embedding-001`) that was used to create the document embeddings stored in Neo4j. This ensures vector similarity search works correctly by maintaining embedding consistency.
+
 ### Claude Desktop Configuration
 
 Edit your Claude Desktop configuration file:
@@ -204,6 +259,17 @@ Edit your Claude Desktop configuration file:
         "type=bind,src=/path/to/your/checkout/velociraptor/files,dst=/projects/veolciraptor,ro",
         "mcp/filesystem",
         "/projects"
+      ]
+    },
+    "embed-query": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/your/checkout/velociraptor/.env",
+        "velociraptor/embed-query:latest"
       ]
     }
   }

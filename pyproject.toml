@@ -14,7 +14,8 @@ dependencies = [
     "python-dotenv>=1.1.1",
     "pydantic>=2.11.7",
     "langchain-text-splitters>=0.3.8",
-    "aiofiles>=24.1.0"
+    "aiofiles>=24.1.0",
+    "mcp>=1.0.0"
 ]
 
 [project.optional-dependencies]

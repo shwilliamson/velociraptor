@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Copy requirements and install dependencies
+COPY pyproject.toml .
+RUN pip install -e .
+
+# Copy source code
+COPY src/ src/
+
+# Set environment variables
+ENV PYTHONPATH=/app
+
+# Run the MCP server directly
+CMD ["python", "-m", "src.velociraptor.mcp.embed_query_mcp_server"]
