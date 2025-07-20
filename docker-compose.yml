@@ -19,11 +19,11 @@ services:
       - ./neo4j_data_volumes/current/plugins:/plugins
     restart: unless-stopped
 
-  embed-query:
+  semantic-search:
     build:
       context: .
-      dockerfile: Dockerfile.embed-query
-    image: velociraptor/embed-query:latest
+      dockerfile: Dockerfile.semantic-search
+    image: velociraptor/semantic-search:latest
     env_file:
       - .env
     restart: unless-stopped

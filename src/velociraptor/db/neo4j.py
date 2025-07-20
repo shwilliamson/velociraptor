@@ -115,6 +115,30 @@ class Neo4jDb:
         for s in summaries:
             await self.create_edge(doc, s, EdgeType.SUMMARIZES)
 
+    async def semantic_search(self, query_vector: list[float], limit: int = 10) -> list[dict]:
+        """Search for chunks using vector similarity.
+        
+        Args:
+            query_vector: The embedding vector to search with
+            limit: Maximum number of results to return
+            
+        Returns:
+            list[dict]: List of matching chunks with their similarity scores and metadata
+        """
+        cypher_query = """
+        CALL db.index.vector.queryNodes('chunk_embedding_vector', $limit, $query_vector)
+        YIELD node, score
+        MATCH (node)-[:PART_OF]->(parent)
+        RETURN node.text as text, node.uuid as chunk_id, score, 
+               parent.uuid as parent_id, labels(parent) as parent_labels
+        ORDER BY score DESC
+        """
+        
+        async with self.driver.session() as session:
+            result = await session.run(cypher_query, limit=limit, query_vector=query_vector)
+            records = await result.data()
+            return records
+
     async def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
         logger.info("Creating indexes")
