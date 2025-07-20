@@ -117,7 +117,9 @@ def process_documents_folder() -> None:
             db.save_page_summary(summary, page, prior_summary)
             summaries.append(summary)
 
+        logger.info("Beginning to summarize hierarchical layers")
         summarize_layer(summaries, doc)
+        logger.info("Finished summarizing hierarchical layers")
 
     db.create_indexes()
     

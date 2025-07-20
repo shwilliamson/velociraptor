@@ -18,16 +18,17 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
             The full text on the page. Represent the content in markdown format, especially tabular data. 
             Remain faithful to the contents and layout of the page.
         """)
-        summary: str= Field(description="""
+        summary: str = Field(description="""
             A succinct yet thorough summary of the contents of the page.  
             Describe any graphics or tabular data in detail so that the information they convey visually is captured in text. 
             Attempt to preserve important or unique keywords and names that could be vital search terms.
         """)
-        has_graphics: bool= Field(description="""
+        page_number: int = Field(description="The page number of this page in the document.")
+        has_graphics: bool = Field(description="""
             Indicate whether this page has information represented in graphic form. 
             This could be charts, graphs, pictures, images, drawings, or other forms.
         """)
-        has_tabular_data: bool= Field(description="""
+        has_tabular_data: bool = Field(description="""
             Indicate whether there is tabular data on this page.
         """)
 
@@ -38,6 +39,7 @@ def extract_and_summarize_page(page: Page) -> (Page, Summary):
     response = llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
     response_obj = PageTextResponse.model_validate_json(response)
     page.text = response_obj.full_text
+    page.page_number = response_obj.page_number
     page.has_graphics = response_obj.has_graphics
     page.has_tabular_data = response_obj.has_tabular_data
     summary = Summary(
