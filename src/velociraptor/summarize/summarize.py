@@ -9,7 +9,7 @@ from velociraptor.prompts.prompt import extract_and_summarize_page_prompt, summa
 llm = Gemini()
 
 
-async def extract_and_summarize_page(page: Page) -> (Page, Summary):
+async def extract_and_summarize_page(page: Page, retry_count: int = 0) -> (Page, Summary):
     class PageTextResponse(BaseModel):
         """
         Pydantic model representing the output extracted from a document page.
@@ -34,23 +34,29 @@ async def extract_and_summarize_page(page: Page) -> (Page, Summary):
             Indicate whether there is tabular data on this page.
         """)
 
-    attach = Attachment(
-        file_path=page.file_path,
-        mime_type=page.mime_type
-    )
-    response = await llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
-    response_obj = PageTextResponse.model_validate_json(response)
-    page.text = response_obj.full_text
-    page.page_number = response_obj.page_number
-    page.has_graphics = response_obj.has_graphics
-    page.has_tabular_data = response_obj.has_tabular_data
-    summary = Summary(
-        document_uuid=page.document_uuid,
-        height=page.height + 1,
-        position=page.position,
-        text=response_obj.summary
-    )
-    return page, summary
+    try:
+        attach = Attachment(
+            file_path=page.file_path,
+            mime_type=page.mime_type
+        )
+        response = await llm.prompt(extract_and_summarize_page_prompt(), [attach], PageTextResponse.model_json_schema())
+        response_obj = PageTextResponse.model_validate_json(response)
+        page.text = response_obj.full_text
+        page.page_number = response_obj.page_number
+        page.has_graphics = response_obj.has_graphics
+        page.has_tabular_data = response_obj.has_tabular_data
+        summary = Summary(
+            document_uuid=page.document_uuid,
+            height=page.height + 1,
+            position=page.position,
+            text=response_obj.summary
+        )
+        return page, summary
+    except Exception as e:
+        if retry_count < 2:
+            return await extract_and_summarize_page(page, retry_count + 1)
+        else:
+            raise
 
 
 async def summarize_summaries(*summaries: Summary, position: int) -> Summary:
