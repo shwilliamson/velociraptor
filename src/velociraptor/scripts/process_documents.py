@@ -26,7 +26,7 @@ def sanitize_folder_name(filename: str) -> str:
     return re.sub(r'[<>:"/\\|?*]', '_', name)
 
 
-async def summarize_layer(summaries: list[Summary], doc: Document) -> None:
+async def summarize_layer(summaries: list[Summary], doc: Document, is_new_document: bool = False) -> None:
     """Recursively summarizes layers of summaries up to the root document."""
     if len(summaries) < 4:
         # base case, we've reached the root doc
@@ -46,13 +46,27 @@ async def summarize_layer(summaries: list[Summary], doc: Document) -> None:
             else summaries[i:]
         new_summary = await summarize_summaries(*batch, position=len(new_summaries))
         i += 2  # Move by 2 to create overlap
-        prior_summary = new_summaries[-1] if new_summaries else None
-        await db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
+        
+        # Only check if summary exists if this is an existing document
+        if is_new_document:
+            # New document, no summaries exist yet
+            prior_summary = new_summaries[-1] if new_summaries else None
+            await db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
+            logger.info(f"Saved new summary at height {new_summary.height}, position {new_summary.position}")
+        else:
+            # Existing document, check if summary already exists
+            summary_exists = await db.node_exists_by_position(doc.uuid, new_summary.height, new_summary.position)
+            if not summary_exists:
+                prior_summary = new_summaries[-1] if new_summaries else None
+                await db.save_summary(new_summary, prior_summary=prior_summary, child_summaries=batch)
+                logger.info(f"Saved new summary at height {new_summary.height}, position {new_summary.position}")
+            else:
+                logger.info(f"Summary at height {new_summary.height}, position {new_summary.position} already exists, skipping")
         new_summaries.append(new_summary)
 
     logger.info(f"Summarized layer {new_summaries[0].height}.")
     # Recursively process the new layer
-    await summarize_layer(new_summaries, doc)
+    await summarize_layer(new_summaries, doc, is_new_document)
 
 
 async def process_documents_folder() -> None:
@@ -82,20 +96,35 @@ async def process_documents_folder() -> None:
             continue
 
         logger.info(f"Found PDF: {file_path}")
+        
+        # Check if document already exists
+        existing_doc = await db.get_document_by_path(str(file_path))
+        is_new_document = False
+        if existing_doc:
+            doc = existing_doc
+            # If document is fully processed (has text and valid height), skip entirely
+            if doc.text and doc.height >= 0:
+                logger.info(f"Document {doc.uuid} already fully processed, skipping")
+                continue
+            logger.info(f"Found partial existing document {doc.uuid}, resuming processing")
+        else:
+            # Create new document
+            doc = Document(
+                text="", # not yet known
+                height=-1,  # not yet known
+                position=0,
+                file_path=str(file_path),
+                file_name=file_path.stem,
+                mime_type=mime_type
+            )
+            await db.save_document(doc)
+            is_new_document = True
+            logger.info(f"Created new document {doc.uuid}")
+        
         folder_name = sanitize_folder_name(file_path.name)
         output_folder = documents_split_path / folder_name
         logger.info(f"Creating output folder: {output_folder}")
         output_folder.mkdir(parents=True, exist_ok=True)
-
-        doc = Document(
-            text="", # not yet known
-            height=-1,  # not yet known
-            position=0,
-            file_path=str(file_path),
-            file_name=file_path.stem,
-            mime_type=mime_type
-        )
-        await db.save_document(doc)
 
         # Collect all pages first
         page_paths = list(split_pdf_to_images(file_path, output_folder))
@@ -125,16 +154,40 @@ async def process_documents_folder() -> None:
             
             # Save results sequentially to maintain order
             for page, (processed_page, summary) in zip(batch, batch_results):
-                prior_page = pages[-1] if pages else None
-                await db.save_page(processed_page, doc, prior_page)
-                pages.append(processed_page)
+                # Only check if page exists if this is an existing document
+                if is_new_document:
+                    # New document, no nodes exist yet
+                    prior_page = pages[-1] if pages else None
+                    await db.save_page(processed_page, doc, prior_page)
+                    logger.info(f"Saved new page {processed_page.position}")
+                    
+                    prior_summary = summaries[-1] if summaries else None
+                    await db.save_page_summary(summary, processed_page, prior_summary)
+                    logger.info(f"Saved new page summary {summary.position}")
+                else:
+                    # Existing document, check if nodes already exist
+                    page_exists = await db.node_exists_by_position(doc.uuid, 0, processed_page.position)
+                    if not page_exists:
+                        prior_page = pages[-1] if pages else None
+                        await db.save_page(processed_page, doc, prior_page)
+                        logger.info(f"Saved new page {processed_page.position}")
+                    else:
+                        logger.info(f"Page {processed_page.position} already exists, skipping")
 
-                prior_summary = summaries[-1] if summaries else None
-                await db.save_page_summary(summary, processed_page, prior_summary)
+                    # Check if page summary already exists
+                    summary_exists = await db.node_exists_by_position(doc.uuid, 1, summary.position)
+                    if not summary_exists:
+                        prior_summary = summaries[-1] if summaries else None
+                        await db.save_page_summary(summary, processed_page, prior_summary)
+                        logger.info(f"Saved new page summary {summary.position}")
+                    else:
+                        logger.info(f"Page summary {summary.position} already exists, skipping")
+                
+                pages.append(processed_page)
                 summaries.append(summary)
 
         logger.info("Beginning to summarize hierarchical layers")
-        await summarize_layer(summaries, doc)
+        await summarize_layer(summaries, doc, is_new_document)
         logger.info("Finished summarizing hierarchical layers")
 
     await db.create_indexes()

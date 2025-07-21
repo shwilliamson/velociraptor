@@ -153,6 +153,49 @@ class Neo4jDb:
             logger.error(f"Semantic search failed: {e}", exc_info=True)
             raise
 
+    async def node_exists_by_position(self, document_uuid: str, height: int, position: int) -> bool:
+        """Check if a node exists with the given document_uuid, height, and position.
+        
+        Args:
+            document_uuid: The document UUID
+            height: The height in the tree
+            position: The position at that height
+            
+        Returns:
+            bool: True if node exists, False otherwise
+        """
+        cypher_query = """
+        MATCH (n {document_uuid: $document_uuid, height: $height, position: $position})
+        RETURN count(n) > 0 as exists
+        """
+        
+        async with self.driver.session() as session:
+            result = await session.run(cypher_query, 
+                                     document_uuid=document_uuid, 
+                                     height=height, 
+                                     position=position)
+            record = await result.single()
+            return record["exists"]
+
+    async def get_document_by_path(self, file_path: str) -> Optional[Document]:
+        """Get an existing document by file path.
+        
+        Args:
+            file_path: The file path to search for
+            
+        Returns:
+            Document: The existing document if found, None otherwise
+        """
+        cypher_query = "MATCH (d:Document {file_path: $file_path}) RETURN d"
+        
+        async with self.driver.session() as session:
+            result = await session.run(cypher_query, file_path=file_path)
+            record = await result.single()
+            if record:
+                props = dict(record["d"])
+                return Document.from_neo4j(props)
+            return None
+
     async def create_indexes(self):
         """Create full text and vector indexes for efficient querying."""
         logger.info("Creating indexes")
