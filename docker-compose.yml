@@ -40,3 +40,14 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
+
+  neo4j-fulltext-search:
+    build:
+      context: .
+      dockerfile: Dockerfile.neo4j-fulltext-search
+    image: velociraptor/neo4j-fulltext-search:latest
+    env_file:
+      - .env.docker
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

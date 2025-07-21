@@ -228,6 +228,39 @@ python -m src.velociraptor.mcp.semantic_search_mcp
 
 **Purpose**: Performs complete semantic search by automatically embedding queries using the same Gemini embedding model (`gemini-embedding-001`) and executing vector similarity search against the Neo4j knowledge graph. This eliminates the need to send large embedding vectors over MCP, significantly improving search performance.
 
+#### 4. Neo4j Full-Text Search MCP Server
+
+**REQUIRED**: This server enables Neo4j full-text search queries for precise keyword matching and text filtering.
+
+The Neo4j full-text search MCP server is available as a Docker container. **You must build the Docker image first:**
+
+```bash
+# Build the Docker image for the Neo4j full-text search MCP server
+docker-compose build neo4j-fulltext-search
+```
+
+Add to your MCP client configuration:
+
+```json
+{
+  "mcpServers": {
+    "neo4j-fulltext-search": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/your/checkout/velociraptor/.env.docker",
+        "velociraptor/neo4j-fulltext-search:latest"
+      ]
+    }
+  }
+}
+```
+
+**Purpose**: Executes Neo4j full-text search queries using `CALL db.index.fulltext.queryNodes()` and `CALL db.index.fulltext.queryRelationships()`. These operations are restricted by most Neo4j MCP servers but are essential for precise text matching and filtering. This server provides secure access to these capabilities while preventing other CALL operations.
+
 ### Claude Desktop Configuration
 
 Edit your Claude Desktop configuration file:
@@ -270,6 +303,17 @@ Edit your Claude Desktop configuration file:
         "--env-file",
         "/path/to/your/checkout/velociraptor/.env.docker",
         "velociraptor/semantic-search:latest"
+      ]
+    },
+    "neo4j-fulltext-search": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "--env-file",
+        "/path/to/your/checkout/velociraptor/.env.docker",
+        "velociraptor/neo4j-fulltext-search:latest"
       ]
     }
   }
