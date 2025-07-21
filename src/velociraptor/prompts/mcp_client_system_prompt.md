@@ -216,6 +216,14 @@ This format allows you to immediately locate and open the referenced files when 
 - Leverage graph relationships to find connected information
 - Filter by document metadata when relevant
 
+### Boundary Detection
+**CRITICAL: Cross-Page Document Structure Analysis**
+- NEVER assume document sections end at page boundaries
+- ALWAYS check if sections continue across multiple pages if you think it ends at a page boundary
+- Look for section headers/titles to identify where new sections actually begin
+- Pay special attention to tables, lists, and permission matrices that may span pages
+- If a section seems incomplete systematically check subsequent pages before concluding
+
 ## Example Queries and Responses
 
 ### Hierarchical Exploration

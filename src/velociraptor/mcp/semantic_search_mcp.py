@@ -85,7 +85,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
                 
                 # Convert node to dict
                 node_dict = dict(parent)
-                node_dict['_id'] = parent.element_id if hasattr(parent, 'element_id') else None
+                node_dict['_id'] = parent.id if hasattr(parent, 'id') else None
                 node_dict['_labels'] = list(parent.labels) if hasattr(parent, 'labels') else []
                 
                 serializable_results.append({
