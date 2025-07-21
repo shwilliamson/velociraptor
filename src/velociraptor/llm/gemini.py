@@ -97,8 +97,7 @@ class Gemini:
                 
                 response = await self.client.aio.models.embed_content(
                     model='gemini-embedding-001',
-                    contents=batch,
-                    request_options={'timeout': 60}
+                    contents=batch
                 )
 
                 for text, embedding in zip(batch, response.embeddings):
