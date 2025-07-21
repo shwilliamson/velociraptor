@@ -59,7 +59,8 @@ class Gemini:
             response = await self.client.aio.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
-                config=config
+                config=config,
+                request_options={'timeout': 60}
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)
@@ -96,7 +97,8 @@ class Gemini:
                 
                 response = await self.client.aio.models.embed_content(
                     model='gemini-embedding-001',
-                    contents=batch
+                    contents=batch,
+                    request_options={'timeout': 60}
                 )
 
                 for text, embedding in zip(batch, response.embeddings):

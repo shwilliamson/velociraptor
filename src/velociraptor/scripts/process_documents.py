@@ -17,7 +17,7 @@ from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
 db = Neo4jDb()
-BATCH_SIZE = 15
+BATCH_SIZE = 10
 
 def sanitize_folder_name(filename: str) -> str:
     """Replace illegal directory characters with underscores."""
