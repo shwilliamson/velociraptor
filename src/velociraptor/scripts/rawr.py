@@ -3,7 +3,7 @@ load_dotenv()
 
 from pathlib import Path
 
-from velociraptor.llm.gemini_mcp_client import MCPGeminiClient
+from velociraptor.llm.anthropic_mcp_client import MCPAnthropicClient
 from velociraptor.utils.context_manager import ContextManager
 from velociraptor.utils.logger import get_logger
 
@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 async def rawr(prompt: str, continue_conversation: bool = False) -> str:
     """
-    Generate a response using Gemini LLM with MCP tool support.
+    Generate a response using Anthropic Claude with MCP tool support via AWS Bedrock.
     
     Args:
         prompt: The user prompt to send to the LLM
@@ -60,9 +60,9 @@ async def rawr(prompt: str, continue_conversation: bool = False) -> str:
         conversation_history = context_manager.get_context()
         full_prompt = conversation_history.get_formatted_prompt()
 
-        # Use MCP-enabled Gemini client
-        async with MCPGeminiClient(context_manager=context_manager) as client:
-            logger.info("Processing prompt with MCP-enabled Gemini")
+        # Use MCP-enabled Anthropic client
+        async with MCPAnthropicClient(context_manager=context_manager) as client:
+            logger.info("Processing prompt with MCP-enabled Anthropic Claude via Bedrock")
             response = await client.prompt(full_prompt)
             logger.info("Successfully generated response")
             
