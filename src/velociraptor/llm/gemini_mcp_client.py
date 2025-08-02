@@ -22,6 +22,11 @@ from velociraptor.models.conversation import (
 )
 from velociraptor.utils.logger import get_logger
 
+# Forward reference for type hints
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from velociraptor.utils.context_manager import ContextManager
+
 logger = get_logger(__name__)
 
 
@@ -40,11 +45,11 @@ class MCPServer:
 class MCPGeminiClient:
     """MCP-enhanced Gemini client using manual function calling for full conversational control."""
 
-    def __init__(self):
+    def __init__(self, context_manager: Optional['ContextManager'] = None):
         self.gemini = Gemini()
         self.exit_stack: Optional[AsyncExitStack] = None
         self.mcp_sessions: List[ClientSession] = []
-        self.context_file_path = Path(".context.json")
+        self.context_manager = context_manager
         
         # Tool registry mapping tool names to MCP sessions and metadata
         self.tool_registry: Dict[str, Dict[str, Any]] = {}
@@ -296,6 +301,11 @@ class MCPGeminiClient:
         tool_info = self.tool_registry[tool_name]
         session = tool_info['session']
         
+        # Publish tool request to context manager if available
+        call_id = None
+        if self.context_manager:
+            call_id = self.context_manager.publish_tool_request(tool_name, arguments)
+        
         try:
             logger.info(f"Tool invoked: {tool_name}")
             logger.debug(f"Tool arguments: {arguments}")
@@ -314,14 +324,26 @@ class MCPGeminiClient:
                         serializable_result.append({"type": "text", "text": content_item.text})
                     else:
                         serializable_result.append(str(content_item))
-                return {"error": None, "result": serializable_result}
+                final_result = {"error": None, "result": serializable_result}
             else:
-                return {"error": None, "result": str(result)}
+                final_result = {"error": None, "result": str(result)}
+            
+            # Publish tool result to context manager if available
+            if self.context_manager and call_id:
+                self.context_manager.publish_tool_result(call_id, final_result.get('result'), final_result.get('error'))
+                
+            return final_result
             
         except Exception as e:
             error_msg = f"Tool '{tool_name}' failed: {str(e)}"
             logger.error(error_msg, exc_info=True)
-            return {"error": error_msg, "result": None}
+            final_result = {"error": error_msg, "result": None}
+            
+            # Publish error result to context manager if available
+            if self.context_manager and call_id:
+                self.context_manager.publish_tool_result(call_id, final_result.get('result'), final_result.get('error'))
+                
+            return final_result
 
     async def prompt(
         self, 
@@ -334,10 +356,10 @@ class MCPGeminiClient:
         Enhanced prompt method using manual function calling for full conversational control.
         
         Args:
-            prompt: The text prompt to send
+            prompt: The text prompt to send (should be full formatted prompt from conversation history)
             attachments: List of Attachment objects to include
             response_json_schema: JSON schema for response
-            conversation_context: Existing conversation context to continue
+            conversation_context: Existing conversation context to continue (not used when context_manager is available)
             
         Returns:
             The string response from the model with full tool call context preserved
@@ -349,19 +371,11 @@ class MCPGeminiClient:
             if self.tool_registry:
                 logger.info(f"Available MCP tools: {list(self.tool_registry.keys())}")
             
-            # Load or create conversation context
-            if conversation_context is None:
-                conversation_context = self._load_conversation_context()
-                if conversation_context is None:
-                    conversation_context = ConversationHistory(messages=[])
-            
-            # Add user message to context
-            user_message = ConversationMessage(
-                type=MessageType.USER,
-                parts=[MessagePart(type="text", content=prompt)],
-                timestamp=datetime.now().isoformat()
-            )
-            conversation_context.add_message(user_message)
+            # Use context from context_manager if available, otherwise use provided context
+            if self.context_manager:
+                conversation_context = self.context_manager.get_context()
+            elif conversation_context is None:
+                conversation_context = ConversationHistory(messages=[])
             
             # Prepare content from conversation history
             from google.genai.types import Part
@@ -439,17 +453,7 @@ class MCPGeminiClient:
                     # No more function calls, we have the final response
                     logger.info(f"Final response received after {turn} turns")
                     
-                    # Add assistant response to context
-                    assistant_message = ConversationMessage(
-                        type=MessageType.ASSISTANT,
-                        parts=[MessagePart(type="text", content=response_text)],
-                        timestamp=datetime.now().isoformat()
-                    )
-                    conversation_context.add_message(assistant_message)
-                    
-                    # Save updated context
-                    self._save_conversation_context(conversation_context)
-                    
+                    # Note: AI response will be published to context by the caller (rawr.py)
                     return response_text or ""
                 
                 # Process function calls
@@ -498,40 +502,13 @@ class MCPGeminiClient:
                     result_text = f"Function {tool_name} returned: {tool_result.get('result', 'No result')}"
                     contents.append(Part.from_text(text=result_text))
                 
-                # Add tool messages to context
-                if tracked_tool_calls:
-                    tool_call_message = ConversationMessage(
-                        type=MessageType.TOOL_CALL,
-                        parts=[MessagePart(type="text", content=f"Executed {len(tracked_tool_calls)} tool calls")],
-                        tool_calls=tracked_tool_calls,
-                        timestamp=datetime.now().isoformat()
-                    )
-                    conversation_context.add_message(tool_call_message)
-                
-                if tracked_tool_results:
-                    tool_result_message = ConversationMessage(
-                        type=MessageType.TOOL_RESULT,
-                        parts=[MessagePart(type="text", content=f"Tool results for {len(tracked_tool_results)} calls")],
-                        tool_results=tracked_tool_results,
-                        timestamp=datetime.now().isoformat()
-                    )
-                    conversation_context.add_message(tool_result_message)
+                # Note: Tool calls and results are now published directly via context_manager in _call_mcp_tool
             
             # If we reach max turns, return what we have
             logger.warning(f"Reached maximum turns ({max_turns}), returning current response")
             final_response = response_text or "Maximum conversation turns reached"
             
-            # Add final response to context
-            assistant_message = ConversationMessage(
-                type=MessageType.ASSISTANT,
-                parts=[MessagePart(type="text", content=final_response)],
-                timestamp=datetime.now().isoformat()
-            )
-            conversation_context.add_message(assistant_message)
-            
-            # Save updated context
-            self._save_conversation_context(conversation_context)
-            
+            # Note: Final response will be published to context by the caller (rawr.py)
             return final_response
             
         except Exception as e:
@@ -559,25 +536,6 @@ class MCPGeminiClient:
             status[server.name] = i < len(self.mcp_sessions)
         return status
 
-    def _load_conversation_context(self) -> Optional[ConversationHistory]:
-        """Load existing conversation context from .context.json."""
-        try:
-            if self.context_file_path.exists():
-                with open(self.context_file_path, 'r', encoding='utf-8') as f:
-                    json_content = f.read()
-                return ConversationHistory.from_json(json_content)
-        except Exception as e:
-            logger.error(f"Error loading conversation context: {e}", exc_info=True)
-        return None
-
-    def _save_conversation_context(self, context: ConversationHistory) -> None:
-        """Save conversation context to .context.json."""
-        try:
-            with open(self.context_file_path, 'w', encoding='utf-8') as f:
-                f.write(context.to_json())
-            logger.info(f"Context saved with {len(context.messages)} messages")
-        except Exception as e:
-            logger.error(f"Error saving conversation context: {e}", exc_info=True)
 
 
 
