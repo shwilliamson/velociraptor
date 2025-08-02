@@ -122,7 +122,7 @@ class Neo4jDb:
         for s in summaries:
             await self.create_edge(doc, s, EdgeType.SUMMARIZES)
 
-    async def semantic_search(self, query_vector: list[float], limit: int = 10) -> list[dict]:
+    async def semantic_search(self, query_vector: list[float], limit: int = 5) -> list[dict]:
         """Search for chunks using vector similarity.
         
         Args:

@@ -15,8 +15,8 @@ async def extract_and_summarize_page(page: Page, retry_count: int = 0) -> (Page,
         Pydantic model representing the output extracted from a document page.
         """
         full_text: str = Field(description="""
-            The full text on the page. Represent the content in markdown format, especially tabular data. 
-            Remain faithful to the contents and layout of the page.
+            The full text on the page. Represent the page content in markdown format to maintain structure and 
+            formatting information, especially for tabular data. Remain faithful to the contents and layout of the page.
         """)
         summary: str = Field(description="""
             A succinct yet thorough summary of the contents of the page.  
