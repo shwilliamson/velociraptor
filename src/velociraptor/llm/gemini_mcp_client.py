@@ -51,6 +51,12 @@ class MCPGeminiClient:
                 container_pattern="neo4j-fulltext-search",
                 module_path="velociraptor.mcp.neo4j_full_text_search_mcp", 
                 description="Neo4j full-text search with security restrictions"
+            ),
+            MCPServer(
+                name="neo4j_cypher",
+                container_pattern="neo4j-cypher",
+                module_path="mcp_neo4j_cypher.server",
+                description="Neo4j Cypher queries for graph database operations"
             )
         ]
 
@@ -128,14 +134,25 @@ class MCPGeminiClient:
             raise RuntimeError("MCPGeminiClient must be used as async context manager")
             
         try:
-            server_params = StdioServerParameters(
-                command="docker",
-                args=[
-                    "exec", "-i", server.container_name,
-                    "python", "-m", server.module_path
-                ],
-                env=None
-            )
+            # Handle different command formats for different servers
+            if server.name == "neo4j_cypher":
+                server_params = StdioServerParameters(
+                    command="docker",
+                    args=[
+                        "exec", "-i", server.container_name,
+                        "mcp-neo4j-cypher", "--transport", "stdio"
+                    ],
+                    env=None
+                )
+            else:
+                server_params = StdioServerParameters(
+                    command="docker",
+                    args=[
+                        "exec", "-i", server.container_name,
+                        "python", "-m", server.module_path
+                    ],
+                    env=None
+                )
             
             # Use exit_stack to manage connection lifecycle
             read_stream, write_stream = await self.exit_stack.enter_async_context(
