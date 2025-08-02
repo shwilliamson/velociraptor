@@ -8,7 +8,7 @@ from datetime import datetime
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from google.genai.types import GenerateContentConfig
+from google.genai.types import GenerateContentConfig, FunctionDeclaration, Tool
 
 from velociraptor.llm.gemini import Gemini
 from velociraptor.models.attachment import Attachment
@@ -25,6 +25,8 @@ from velociraptor.utils.logger import get_logger
 logger = get_logger(__name__)
 
 
+
+
 @dataclass
 class MCPServer:
     """Configuration for an MCP server connection."""
@@ -36,13 +38,19 @@ class MCPServer:
 
 
 class MCPGeminiClient:
-    """MCP-enhanced Gemini client using native SDK MCP support."""
+    """MCP-enhanced Gemini client using manual function calling for full conversational control."""
 
     def __init__(self):
         self.gemini = Gemini()
         self.exit_stack: Optional[AsyncExitStack] = None
         self.mcp_sessions: List[ClientSession] = []
         self.context_file_path = Path(".context.json")
+        
+        # Tool registry mapping tool names to MCP sessions and metadata
+        self.tool_registry: Dict[str, Dict[str, Any]] = {}
+        
+        # Function schemas for Gemini function calling
+        self.function_declarations: List[FunctionDeclaration] = []
         
         # Configure MCP servers from docker-compose.yml
         self.servers = [
@@ -139,6 +147,9 @@ class MCPGeminiClient:
                 # Continue with other servers even if one fails
         
         logger.info(f"Connected to {len(self.mcp_sessions)} MCP servers")
+        
+        # Register all available tools for function calling
+        await self._register_tools()
 
     async def _connect_to_server(self, server: MCPServer) -> Optional[ClientSession]:
         """Connect to a single MCP server."""
@@ -183,29 +194,184 @@ class MCPGeminiClient:
             logger.error(f"Failed to connect to {server.name}: {e}", exc_info=True)
             return None
 
+    async def _register_tools(self) -> None:
+        """Register all available MCP tools for function calling."""
+        logger.info("Registering MCP tools for function calling...")
+        
+        self.tool_registry.clear()
+        self.function_declarations.clear()
+        
+        for i, session in enumerate(self.mcp_sessions):
+            try:
+                server_name = self.servers[i].name if i < len(self.servers) else f"server_{i}"
+                
+                # Get available tools from this MCP server
+                tools_response = await session.list_tools()
+                
+                for tool in tools_response.tools:
+                    # Skip write tools for read-only operation
+                    if tool.name == "write_neo4j_cypher":
+                        logger.info(f"Skipping write tool: {tool.name}")
+                        continue
+                    
+                    # Register tool in our registry
+                    self.tool_registry[tool.name] = {
+                        'session': session,
+                        'server_name': server_name,
+                        'description': tool.description or f"Tool from {server_name}",
+                        'input_schema': tool.inputSchema if hasattr(tool, 'inputSchema') else {}
+                    }
+                    
+                    # Create function declaration for Gemini with sanitized schema
+                    input_schema = tool.inputSchema if hasattr(tool, 'inputSchema') else {
+                        "type": "object",
+                        "properties": {},
+                        "required": []
+                    }
+                    
+                    # Sanitize schema for Gemini compatibility
+                    sanitized_schema = self._sanitize_json_schema(input_schema)
+                    logger.debug(f"Tool {tool.name} - Original schema: {input_schema}")
+                    logger.debug(f"Tool {tool.name} - Sanitized schema: {sanitized_schema}")
+                    
+                    function_decl = FunctionDeclaration(
+                        name=tool.name,
+                        description=tool.description or f"Tool from {server_name}",
+                        parameters=sanitized_schema
+                    )
+                    self.function_declarations.append(function_decl)
+                    
+                    logger.info(f"Registered tool: {tool.name} from {server_name}")
+                    
+            except Exception as e:
+                logger.error(f"Failed to register tools from session {i}: {e}", exc_info=True)
+        
+        logger.info(f"Registered {len(self.tool_registry)} tools total")
+
+    def _sanitize_json_schema(self, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Sanitize JSON schema to be compatible with Gemini function declarations."""
+        if not isinstance(schema, dict):
+            return {"type": "object", "properties": {}, "required": []}
+        
+        # Create a clean copy
+        sanitized = {}
+        
+        # Copy allowed fields for Gemini (exclude JSON Schema specific fields)
+        allowed_fields = {"type", "properties", "required", "description", "items", "enum"}
+        # Explicitly exclude problematic JSON Schema fields
+        excluded_fields = {"additional_properties", "additionalProperties", "$schema", "$id", "$ref", "definitions", "patternProperties", "dependencies"}
+        
+        for key, value in schema.items():
+            if key in allowed_fields and key not in excluded_fields:
+                if key == "properties" and isinstance(value, dict):
+                    # Recursively sanitize nested properties
+                    sanitized[key] = {}
+                    for prop_name, prop_schema in value.items():
+                        sanitized[key][prop_name] = self._sanitize_json_schema(prop_schema)
+                elif key == "items" and isinstance(value, dict):
+                    # Sanitize array item schema
+                    sanitized[key] = self._sanitize_json_schema(value)
+                else:
+                    sanitized[key] = value
+        
+        # Ensure we have required fields
+        if "type" not in sanitized:
+            sanitized["type"] = "object"
+        
+        if sanitized["type"] == "object" and "properties" not in sanitized:
+            sanitized["properties"] = {}
+            
+        if sanitized["type"] == "object" and "required" not in sanitized:
+            sanitized["required"] = []
+        
+        return sanitized
+
+    async def _call_mcp_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """Call an MCP tool and return the result."""
+        if tool_name not in self.tool_registry:
+            error_msg = f"Tool '{tool_name}' not found in registry"
+            logger.error(error_msg)
+            return {"error": error_msg, "result": None}
+        
+        tool_info = self.tool_registry[tool_name]
+        session = tool_info['session']
+        
+        try:
+            logger.info(f"Tool invoked: {tool_name}")
+            logger.debug(f"Tool arguments: {arguments}")
+            
+            # Call the MCP tool
+            result = await session.call_tool(tool_name, arguments)
+            
+            logger.info(f"Tool completed: {tool_name}")
+            logger.debug(f"Tool result type: {type(result)}")
+            
+            # Extract serializable content from CallToolResult
+            if hasattr(result, 'content'):
+                serializable_result = []
+                for content_item in result.content:
+                    if hasattr(content_item, 'text'):
+                        serializable_result.append({"type": "text", "text": content_item.text})
+                    else:
+                        serializable_result.append(str(content_item))
+                return {"error": None, "result": serializable_result}
+            else:
+                return {"error": None, "result": str(result)}
+            
+        except Exception as e:
+            error_msg = f"Tool '{tool_name}' failed: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {"error": error_msg, "result": None}
+
     async def prompt(
         self, 
         prompt: str, 
         attachments: Optional[List[Attachment]] = None,
-        response_json_schema: Optional[Dict] = None
+        response_json_schema: Optional[Dict] = None,
+        conversation_context: Optional[ConversationHistory] = None
     ) -> str:
         """
-        Enhanced prompt method using native Gemini MCP support.
+        Enhanced prompt method using manual function calling for full conversational control.
         
         Args:
             prompt: The text prompt to send
             attachments: List of Attachment objects to include
             response_json_schema: JSON schema for response
+            conversation_context: Existing conversation context to continue
             
         Returns:
-            The string response from the model with MCP tools available
+            The string response from the model with full tool call context preserved
         """
         try:
-            logger.info("Processing prompt with MCP tools")
+            logger.info("Processing prompt with manual MCP tool calling")
             
-            # Prepare content parts
+            # Log available tools
+            if self.tool_registry:
+                logger.info(f"Available MCP tools: {list(self.tool_registry.keys())}")
+            
+            # Load or create conversation context
+            if conversation_context is None:
+                conversation_context = self._load_conversation_context()
+                if conversation_context is None:
+                    conversation_context = ConversationHistory(messages=[])
+            
+            # Add user message to context
+            user_message = ConversationMessage(
+                type=MessageType.USER,
+                parts=[MessagePart(type="text", content=prompt)],
+                timestamp=datetime.now().isoformat()
+            )
+            conversation_context.add_message(user_message)
+            
+            # Prepare content from conversation history
             from google.genai.types import Part
-            contents = [Part.from_text(text=prompt)]
+            contents = []
+            
+            # Build conversation history for Gemini
+            for message in conversation_context.messages:
+                for part in message.parts:
+                    if part.type == "text":
+                        contents.append(Part.from_text(text=part.content))
             
             # Add attachments if provided
             if attachments:
@@ -214,7 +380,6 @@ class MCPGeminiClient:
                     try:
                         async with aiofiles.open(attachment.file_path, 'rb') as f:
                             file_data = await f.read()
-
                         file_part = Part.from_bytes(
                             data=file_data,
                             mime_type=attachment.mime_type
@@ -224,7 +389,7 @@ class MCPGeminiClient:
                         logger.error(f"Failed to read attachment {attachment.file_path}: {e}", exc_info=True)
                         raise
 
-            # Build config with MCP sessions as tools
+            # Build config with function declarations
             config_params = {}
             
             # Add JSON schema if provided
@@ -234,115 +399,156 @@ class MCPGeminiClient:
                     "response_json_schema": response_json_schema
                 })
             
-            # Add MCP sessions as tools (native SDK support)
-            if self.mcp_sessions:
-                config_params["tools"] = self.mcp_sessions
-                logger.info(f"Using {len(self.mcp_sessions)} MCP tools")
+            # Add function declarations for manual tool calling
+            if self.function_declarations:
+                config_params["tools"] = [Tool(function_declarations=self.function_declarations)]
+                logger.info(f"Using {len(self.function_declarations)} MCP function declarations")
             
             config = GenerateContentConfig(**config_params) if config_params else None
 
-            # Call Gemini with MCP tools
-            response = await self.gemini.client.aio.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=contents,
-                config=config
-            )
-
-            # Extract tool usage information from response if available
-            tool_calls = []
-            tool_results = []
+            # Start conversation loop for multi-turn tool calling
+            max_turns = 10  # Prevent infinite loops
+            turn = 0
+            response_text = ""  # Initialize response_text
             
-            # Debug: Log the full response structure
-            logger.debug(f"Response type: {type(response)}")
-            logger.debug(f"Response attributes: {dir(response)}")
-            
-            if hasattr(response, 'candidates') and response.candidates:
-                candidate = response.candidates[0]
-                logger.debug(f"Candidate type: {type(candidate)}")
-                logger.debug(f"Candidate attributes: {dir(candidate)}")
+            while turn < max_turns:
+                turn += 1
+                logger.debug(f"Conversation turn {turn}")
                 
-                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                    logger.debug(f"Found {len(candidate.content.parts)} parts in response")
-                    for i, part in enumerate(candidate.content.parts):
-                        logger.debug(f"Part {i} type: {type(part)}")
-                        logger.debug(f"Part {i} attributes: {dir(part)}")
-                        
-                        # Check if this part contains tool call information
-                        if hasattr(part, 'function_call'):
-                            logger.info(f"Found function_call in part {i}")
-                            tool_calls.append({
-                                'name': part.function_call.name if hasattr(part.function_call, 'name') else 'unknown',
-                                'parameters': dict(part.function_call.args) if hasattr(part.function_call, 'args') else {}
-                            })
-                        elif hasattr(part, 'function_response'):
-                            logger.info(f"Found function_response in part {i}")
-                            tool_results.append({
-                                'content': part.function_response,
-                                'error': None
-                            })
-                        elif hasattr(part, 'text') and part.text:
-                            # Sometimes tool calls might be embedded in text
-                            logger.debug(f"Part {i} contains text: {part.text[:100]}...")
-            
-            # Also check for usage metadata that might contain tool information
-            if hasattr(response, 'usage_metadata'):
-                logger.debug(f"Usage metadata: {response.usage_metadata}")
-            
-            # Try alternative extraction methods for different SDK versions
-            if not tool_calls and not tool_results:
-                logger.debug("No tool calls found in standard locations, trying alternative extraction")
-                try:
-                    # Check if response has raw_response or other attributes
-                    if hasattr(response, '_raw_response'):
-                        logger.debug(f"Raw response type: {type(response._raw_response)}")
+                # Call Gemini with current conversation state
+                response = await self.gemini.client.aio.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=contents,
+                    config=config
+                )
+                
+                # Check if response contains function calls
+                function_calls = []
+                response_text = ""  # Reset for each turn
+                
+                if hasattr(response, 'candidates') and response.candidates:
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        for part in candidate.content.parts:
+                            if hasattr(part, 'function_call') and part.function_call is not None:
+                                function_calls.append(part.function_call)
+                            elif hasattr(part, 'text') and part.text:
+                                response_text += part.text
+                
+                if not function_calls:
+                    # No more function calls, we have the final response
+                    logger.info(f"Final response received after {turn} turns")
                     
-                    # Check for tool calls in different response structure
-                    if hasattr(response, 'function_calls'):
-                        logger.info("Found function_calls in response root")
-                        for call in response.function_calls:
-                            tool_calls.append({
-                                'name': call.name if hasattr(call, 'name') else 'unknown',
-                                'parameters': dict(call.args) if hasattr(call, 'args') else {}
-                            })
-                except Exception as e:
-                    logger.debug(f"Alternative extraction failed: {e}")
-
-            # Track tool calls and results in context if any were found
-            if tool_calls or tool_results:
-                try:
-                    self._add_tool_calls_to_context(tool_calls, tool_results)
-                    logger.info(f"Tracked {len(tool_calls)} tool calls and {len(tool_results)} results")
-                except Exception as e:
-                    logger.error(f"Failed to track tool calls in context: {e}", exc_info=True)
-            else:
-                # If no tool calls were extracted but we have MCP sessions, 
-                # tools might have been used transparently by the SDK
-                if self.mcp_sessions:
-                    logger.info("No tool calls extracted from response, but MCP tools were available")
-                    # Add a generic tool usage indicator to context
-                    self._add_generic_tool_usage_to_context(prompt, response.text)
-
-            logger.info("Prompt processed successfully with MCP tools")
-            return response.text
+                    # Add assistant response to context
+                    assistant_message = ConversationMessage(
+                        type=MessageType.ASSISTANT,
+                        parts=[MessagePart(type="text", content=response_text)],
+                        timestamp=datetime.now().isoformat()
+                    )
+                    conversation_context.add_message(assistant_message)
+                    
+                    # Save updated context
+                    self._save_conversation_context(conversation_context)
+                    
+                    return response_text or ""
+                
+                # Process function calls
+                logger.info(f"Processing {len(function_calls)} function calls in turn {turn}")
+                
+                # Track tool calls in context
+                tracked_tool_calls = []
+                tracked_tool_results = []
+                
+                for func_call in function_calls:
+                    logger.debug(f"Function call object: {func_call}")
+                    logger.debug(f"Function call type: {type(func_call)}")
+                    logger.debug(f"Function call attributes: {dir(func_call)}")
+                    
+                    # Handle different function call formats
+                    if hasattr(func_call, 'name'):
+                        tool_name = func_call.name
+                        arguments = dict(func_call.args) if hasattr(func_call, 'args') else {}
+                    elif hasattr(func_call, 'function_name'):
+                        tool_name = func_call.function_name
+                        arguments = dict(func_call.arguments) if hasattr(func_call, 'arguments') else {}
+                    else:
+                        logger.error(f"Unknown function call format: {func_call}")
+                        continue
+                    
+                    # Create tool call record
+                    tool_call = ToolCall(
+                        tool_name=tool_name,
+                        tool_id=f"call_{turn}_{tool_name}_{int(datetime.now().timestamp() * 1000)}",
+                        parameters=arguments
+                    )
+                    tracked_tool_calls.append(tool_call)
+                    
+                    # Execute the tool
+                    tool_result = await self._call_mcp_tool(tool_name, arguments)
+                    
+                    # Create tool result record
+                    tool_result_obj = ToolResult(
+                        tool_call_id=tool_call.tool_id,
+                        result=tool_result.get('result'),
+                        error=tool_result.get('error')
+                    )
+                    tracked_tool_results.append(tool_result_obj)
+                    
+                    # Add function response as text for next turn (simplified approach)
+                    result_text = f"Function {tool_name} returned: {tool_result.get('result', 'No result')}"
+                    contents.append(Part.from_text(text=result_text))
+                
+                # Add tool messages to context
+                if tracked_tool_calls:
+                    tool_call_message = ConversationMessage(
+                        type=MessageType.TOOL_CALL,
+                        parts=[MessagePart(type="text", content=f"Executed {len(tracked_tool_calls)} tool calls")],
+                        tool_calls=tracked_tool_calls,
+                        timestamp=datetime.now().isoformat()
+                    )
+                    conversation_context.add_message(tool_call_message)
+                
+                if tracked_tool_results:
+                    tool_result_message = ConversationMessage(
+                        type=MessageType.TOOL_RESULT,
+                        parts=[MessagePart(type="text", content=f"Tool results for {len(tracked_tool_results)} calls")],
+                        tool_results=tracked_tool_results,
+                        timestamp=datetime.now().isoformat()
+                    )
+                    conversation_context.add_message(tool_result_message)
+            
+            # If we reach max turns, return what we have
+            logger.warning(f"Reached maximum turns ({max_turns}), returning current response")
+            final_response = response_text or "Maximum conversation turns reached"
+            
+            # Add final response to context
+            assistant_message = ConversationMessage(
+                type=MessageType.ASSISTANT,
+                parts=[MessagePart(type="text", content=final_response)],
+                timestamp=datetime.now().isoformat()
+            )
+            conversation_context.add_message(assistant_message)
+            
+            # Save updated context
+            self._save_conversation_context(conversation_context)
+            
+            return final_response
             
         except Exception as e:
-            logger.error(f"Error in MCP-enhanced prompt: {e}", exc_info=True)
+            logger.error(f"Error in manual MCP prompt: {e}", exc_info=True)
             # Fallback to regular Gemini prompt without MCP
             logger.info("Falling back to regular Gemini prompt")
             return await self.gemini.prompt(prompt, attachments, response_json_schema)
 
     async def get_available_tools(self) -> Dict[str, List[str]]:
-        """Get list of available tools from all connected MCP servers."""
+        """Get list of available tools from tool registry."""
         tools_by_server = {}
         
-        for i, session in enumerate(self.mcp_sessions):
-            try:
-                server_name = self.servers[i].name if i < len(self.servers) else f"server_{i}"
-                tools_response = await session.list_tools()
-                tool_names = [tool.name for tool in tools_response.tools]
-                tools_by_server[server_name] = tool_names
-            except Exception as e:
-                logger.error(f"Failed to list tools from session {i}: {e}", exc_info=True)
+        for tool_name, tool_info in self.tool_registry.items():
+            server_name = tool_info['server_name']
+            if server_name not in tools_by_server:
+                tools_by_server[server_name] = []
+            tools_by_server[server_name].append(tool_name)
                 
         return tools_by_server
 
@@ -373,123 +579,6 @@ class MCPGeminiClient:
         except Exception as e:
             logger.error(f"Error saving conversation context: {e}", exc_info=True)
 
-    def _add_tool_calls_to_context(self, tool_calls: List[Dict[str, Any]], tool_results: List[Dict[str, Any]]) -> None:
-        """Add tool calls and results to the conversation context."""
-        try:
-            context = self._load_conversation_context()
-            if not context:
-                logger.warning("No conversation context found, creating new context for tool tracking")
-                # Create a basic context if none exists
-                context = ConversationHistory(messages=[])
-
-            logger.info(f"Adding {len(tool_calls)} tool calls and {len(tool_results)} tool results to context")
-
-            # Create tool call objects
-            tracked_tool_calls = []
-            for i, call in enumerate(tool_calls):
-                tool_call = ToolCall(
-                    tool_name=call.get('name', f'unknown_tool_{i}'),
-                    tool_id=f"call_{i}_{int(datetime.now().timestamp() * 1000)}",
-                    parameters=call.get('parameters', {})
-                )
-                tracked_tool_calls.append(tool_call)
-                logger.debug(f"Created tool call: {tool_call.tool_name} with ID {tool_call.tool_id}")
-
-            # Create tool result objects
-            tracked_tool_results = []
-            for i, result in enumerate(tool_results):
-                # Match results to tool calls when possible
-                tool_call_id = tracked_tool_calls[i].tool_id if i < len(tracked_tool_calls) else f"result_{i}_{int(datetime.now().timestamp() * 1000)}"
-                
-                # Handle different result formats
-                result_content = result
-                error_content = None
-                
-                if isinstance(result, dict):
-                    result_content = result.get('content', result)
-                    error_content = result.get('error')
-                
-                tool_result = ToolResult(
-                    tool_call_id=tool_call_id,
-                    result=result_content,
-                    error=error_content
-                )
-                tracked_tool_results.append(tool_result)
-                logger.debug(f"Created tool result for call ID {tool_call_id}")
-
-            # Add tool call message
-            if tracked_tool_calls:
-                logger.info(f"Adding tool call message with {len(tracked_tool_calls)} calls")
-                tool_call_message = ConversationMessage(
-                    type=MessageType.TOOL_CALL,
-                    parts=[MessagePart(type="text", content=f"Executed {len(tracked_tool_calls)} tool calls")],
-                    tool_calls=tracked_tool_calls,
-                    timestamp=datetime.now().isoformat()
-                )
-                context.add_message(tool_call_message)
-
-            # Add tool result message
-            if tracked_tool_results:
-                logger.info(f"Adding tool result message with {len(tracked_tool_results)} results")
-                tool_result_message = ConversationMessage(
-                    type=MessageType.TOOL_RESULT,
-                    parts=[MessagePart(type="text", content=f"Tool results for {len(tracked_tool_results)} calls")],
-                    tool_results=tracked_tool_results,
-                    timestamp=datetime.now().isoformat()
-                )
-                context.add_message(tool_result_message)
-
-            # Save the updated context
-            self._save_conversation_context(context)
-            logger.info("Successfully added tool calls and results to context")
-            
-        except Exception as e:
-            logger.error(f"Failed to add tool calls to context: {e}", exc_info=True)
-            raise
-
-    def _add_generic_tool_usage_to_context(self, prompt: str, response: str) -> None:
-        """Add a generic tool usage indicator when tools might have been used transparently."""
-        try:
-            context = self._load_conversation_context()
-            if not context:
-                logger.debug("No conversation context found, skipping generic tool usage tracking")
-                return
-
-            # Check if the response seems to contain tool-derived information
-            # This is a heuristic approach since we can't detect tool usage directly
-            tool_indicators = [
-                "based on the search",
-                "according to the data",
-                "from the database",
-                "search results show",
-                "the query returned",
-                "found in the system"
-            ]
-            
-            likely_used_tools = any(indicator in response.lower() for indicator in tool_indicators)
-            
-            if likely_used_tools:
-                logger.info("Response appears to contain tool-derived information, adding to context")
-                
-                # Create a generic tool usage message
-                tool_usage_message = ConversationMessage(
-                    type=MessageType.TOOL_CALL,
-                    parts=[MessagePart(type="text", content="MCP tools may have been used transparently by the SDK")],
-                    tool_calls=[ToolCall(
-                        tool_name="mcp_transparent_tools",
-                        tool_id=f"transparent_{int(datetime.now().timestamp() * 1000)}",
-                        parameters={"prompt_hint": prompt[:100] + "..." if len(prompt) > 100 else prompt}
-                    )],
-                    timestamp=datetime.now().isoformat()
-                )
-                context.add_message(tool_usage_message)
-                self._save_conversation_context(context)
-                logger.debug("Added generic tool usage indicator to context")
-            else:
-                logger.debug("Response doesn't appear to contain tool-derived information")
-                
-        except Exception as e:
-            logger.error(f"Failed to add generic tool usage to context: {e}", exc_info=True)
 
 
 # Enhanced Gemini class that includes MCP support
