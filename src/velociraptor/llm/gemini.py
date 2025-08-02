@@ -59,8 +59,7 @@ class Gemini:
             response = await self.client.aio.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
-                config=config,
-                request_options={'timeout': 60}
+                config=config
             )
 
             processing_time_ms = int((time.time() - start_time) * 1000)

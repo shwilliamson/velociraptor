@@ -1,6 +1,7 @@
 from contextlib import AsyncExitStack
 from typing import Optional, Dict, List
 from dataclasses import dataclass
+import subprocess
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -17,9 +18,10 @@ logger = get_logger(__name__)
 class MCPServer:
     """Configuration for an MCP server connection."""
     name: str
-    container_name: str
+    container_pattern: str  # Pattern to match container names
     module_path: str
     description: str
+    container_name: Optional[str] = None  # Actual resolved container name
 
 
 class MCPGeminiClient:
@@ -34,19 +36,19 @@ class MCPGeminiClient:
         self.servers = [
             MCPServer(
                 name="semantic_search",
-                container_name="velociraptor-semantic-search",
+                container_pattern="semantic-search",
                 module_path="velociraptor.mcp.semantic_search_mcp",
                 description="Semantic search using vector embeddings"
             ),
             MCPServer(
                 name="page_fetch",
-                container_name="velociraptor-page-fetch", 
+                container_pattern="page-fetch", 
                 module_path="velociraptor.mcp.page_fetch_mcp",
                 description="Fetch page images as base64"
             ),
             MCPServer(
                 name="neo4j_fulltext",
-                container_name="velociraptor-neo4j-fulltext-search",
+                container_pattern="neo4j-fulltext-search",
                 module_path="velociraptor.mcp.neo4j_full_text_search_mcp", 
                 description="Neo4j full-text search with security restrictions"
             )
@@ -64,11 +66,51 @@ class MCPGeminiClient:
         if self.exit_stack:
             await self.exit_stack.aclose()
 
+    def _discover_container_names(self) -> None:
+        """Discover actual container names from running Docker containers."""
+        try:
+            # Get list of running containers
+            result = subprocess.run(
+                ["docker", "ps", "--format", "{{.Names}}"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            running_containers = result.stdout.strip().split('\n') if result.stdout.strip() else []
+            logger.info(f"Found {len(running_containers)} running containers")
+            
+            # Match containers to server patterns
+            for server in self.servers:
+                matching_containers = [
+                    name for name in running_containers 
+                    if server.container_pattern in name
+                ]
+                
+                if matching_containers:
+                    # Use the first match (should typically be only one)
+                    server.container_name = matching_containers[0]
+                    logger.info(f"Discovered container '{server.container_name}' for server '{server.name}'")
+                else:
+                    logger.warning(f"No running container found matching pattern '{server.container_pattern}' for server '{server.name}'")
+                    
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Failed to discover container names: {e}", exc_info=True)
+        except FileNotFoundError:
+            logger.error("Docker command not found. Make sure Docker is installed and in PATH", exc_info=True)
+
     async def connect_to_servers(self) -> None:
         """Connect to all configured MCP servers."""
         logger.info("Connecting to MCP servers...")
         
+        # First, discover actual container names
+        self._discover_container_names()
+        
         for server in self.servers:
+            if not server.container_name:
+                logger.warning(f"Skipping server '{server.name}' - no container found")
+                continue
+                
             try:
                 session = await self._connect_to_server(server)
                 if session:
@@ -174,8 +216,7 @@ class MCPGeminiClient:
             response = await self.gemini.client.aio.models.generate_content(
                 model='gemini-2.5-flash',
                 contents=contents,
-                config=config,
-                request_options={'timeout': 60}
+                config=config
             )
 
             logger.info("Prompt processed successfully with MCP tools")
