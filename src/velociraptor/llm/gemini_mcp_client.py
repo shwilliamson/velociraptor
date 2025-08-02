@@ -1,7 +1,10 @@
 from contextlib import AsyncExitStack
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 from dataclasses import dataclass
 import subprocess
+import json
+from pathlib import Path
+from datetime import datetime
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -9,6 +12,14 @@ from google.genai.types import GenerateContentConfig
 
 from velociraptor.llm.gemini import Gemini
 from velociraptor.models.attachment import Attachment
+from velociraptor.models.conversation import (
+    ConversationHistory, 
+    ConversationMessage, 
+    MessagePart, 
+    MessageType,
+    ToolCall,
+    ToolResult
+)
 from velociraptor.utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -31,6 +42,7 @@ class MCPGeminiClient:
         self.gemini = Gemini()
         self.exit_stack: Optional[AsyncExitStack] = None
         self.mcp_sessions: List[ClientSession] = []
+        self.context_file_path = Path(".context.json")
         
         # Configure MCP servers from docker-compose.yml
         self.servers = [
@@ -56,7 +68,7 @@ class MCPGeminiClient:
                 name="neo4j_cypher",
                 container_pattern="neo4j-cypher",
                 module_path="mcp_neo4j_cypher.server",
-                description="Neo4j Cypher queries for graph database operations"
+                description="General Neo4j Cypher query execution - provides read_neo4j_cypher, write_neo4j_cypher, and get_neo4j_schema tools for full database access, schema exploration, and complex graph traversals"
             )
         ]
 
@@ -236,6 +248,80 @@ class MCPGeminiClient:
                 config=config
             )
 
+            # Extract tool usage information from response if available
+            tool_calls = []
+            tool_results = []
+            
+            # Debug: Log the full response structure
+            logger.debug(f"Response type: {type(response)}")
+            logger.debug(f"Response attributes: {dir(response)}")
+            
+            if hasattr(response, 'candidates') and response.candidates:
+                candidate = response.candidates[0]
+                logger.debug(f"Candidate type: {type(candidate)}")
+                logger.debug(f"Candidate attributes: {dir(candidate)}")
+                
+                if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                    logger.debug(f"Found {len(candidate.content.parts)} parts in response")
+                    for i, part in enumerate(candidate.content.parts):
+                        logger.debug(f"Part {i} type: {type(part)}")
+                        logger.debug(f"Part {i} attributes: {dir(part)}")
+                        
+                        # Check if this part contains tool call information
+                        if hasattr(part, 'function_call'):
+                            logger.info(f"Found function_call in part {i}")
+                            tool_calls.append({
+                                'name': part.function_call.name if hasattr(part.function_call, 'name') else 'unknown',
+                                'parameters': dict(part.function_call.args) if hasattr(part.function_call, 'args') else {}
+                            })
+                        elif hasattr(part, 'function_response'):
+                            logger.info(f"Found function_response in part {i}")
+                            tool_results.append({
+                                'content': part.function_response,
+                                'error': None
+                            })
+                        elif hasattr(part, 'text') and part.text:
+                            # Sometimes tool calls might be embedded in text
+                            logger.debug(f"Part {i} contains text: {part.text[:100]}...")
+            
+            # Also check for usage metadata that might contain tool information
+            if hasattr(response, 'usage_metadata'):
+                logger.debug(f"Usage metadata: {response.usage_metadata}")
+            
+            # Try alternative extraction methods for different SDK versions
+            if not tool_calls and not tool_results:
+                logger.debug("No tool calls found in standard locations, trying alternative extraction")
+                try:
+                    # Check if response has raw_response or other attributes
+                    if hasattr(response, '_raw_response'):
+                        logger.debug(f"Raw response type: {type(response._raw_response)}")
+                    
+                    # Check for tool calls in different response structure
+                    if hasattr(response, 'function_calls'):
+                        logger.info("Found function_calls in response root")
+                        for call in response.function_calls:
+                            tool_calls.append({
+                                'name': call.name if hasattr(call, 'name') else 'unknown',
+                                'parameters': dict(call.args) if hasattr(call, 'args') else {}
+                            })
+                except Exception as e:
+                    logger.debug(f"Alternative extraction failed: {e}")
+
+            # Track tool calls and results in context if any were found
+            if tool_calls or tool_results:
+                try:
+                    self._add_tool_calls_to_context(tool_calls, tool_results)
+                    logger.info(f"Tracked {len(tool_calls)} tool calls and {len(tool_results)} results")
+                except Exception as e:
+                    logger.error(f"Failed to track tool calls in context: {e}", exc_info=True)
+            else:
+                # If no tool calls were extracted but we have MCP sessions, 
+                # tools might have been used transparently by the SDK
+                if self.mcp_sessions:
+                    logger.info("No tool calls extracted from response, but MCP tools were available")
+                    # Add a generic tool usage indicator to context
+                    self._add_generic_tool_usage_to_context(prompt, response.text)
+
             logger.info("Prompt processed successfully with MCP tools")
             return response.text
             
@@ -266,6 +352,144 @@ class MCPGeminiClient:
         for i, server in enumerate(self.servers):
             status[server.name] = i < len(self.mcp_sessions)
         return status
+
+    def _load_conversation_context(self) -> Optional[ConversationHistory]:
+        """Load existing conversation context from .context.json."""
+        try:
+            if self.context_file_path.exists():
+                with open(self.context_file_path, 'r', encoding='utf-8') as f:
+                    json_content = f.read()
+                return ConversationHistory.from_json(json_content)
+        except Exception as e:
+            logger.error(f"Error loading conversation context: {e}", exc_info=True)
+        return None
+
+    def _save_conversation_context(self, context: ConversationHistory) -> None:
+        """Save conversation context to .context.json."""
+        try:
+            with open(self.context_file_path, 'w', encoding='utf-8') as f:
+                f.write(context.to_json())
+            logger.info(f"Context saved with {len(context.messages)} messages")
+        except Exception as e:
+            logger.error(f"Error saving conversation context: {e}", exc_info=True)
+
+    def _add_tool_calls_to_context(self, tool_calls: List[Dict[str, Any]], tool_results: List[Dict[str, Any]]) -> None:
+        """Add tool calls and results to the conversation context."""
+        try:
+            context = self._load_conversation_context()
+            if not context:
+                logger.warning("No conversation context found, creating new context for tool tracking")
+                # Create a basic context if none exists
+                context = ConversationHistory(messages=[])
+
+            logger.info(f"Adding {len(tool_calls)} tool calls and {len(tool_results)} tool results to context")
+
+            # Create tool call objects
+            tracked_tool_calls = []
+            for i, call in enumerate(tool_calls):
+                tool_call = ToolCall(
+                    tool_name=call.get('name', f'unknown_tool_{i}'),
+                    tool_id=f"call_{i}_{int(datetime.now().timestamp() * 1000)}",
+                    parameters=call.get('parameters', {})
+                )
+                tracked_tool_calls.append(tool_call)
+                logger.debug(f"Created tool call: {tool_call.tool_name} with ID {tool_call.tool_id}")
+
+            # Create tool result objects
+            tracked_tool_results = []
+            for i, result in enumerate(tool_results):
+                # Match results to tool calls when possible
+                tool_call_id = tracked_tool_calls[i].tool_id if i < len(tracked_tool_calls) else f"result_{i}_{int(datetime.now().timestamp() * 1000)}"
+                
+                # Handle different result formats
+                result_content = result
+                error_content = None
+                
+                if isinstance(result, dict):
+                    result_content = result.get('content', result)
+                    error_content = result.get('error')
+                
+                tool_result = ToolResult(
+                    tool_call_id=tool_call_id,
+                    result=result_content,
+                    error=error_content
+                )
+                tracked_tool_results.append(tool_result)
+                logger.debug(f"Created tool result for call ID {tool_call_id}")
+
+            # Add tool call message
+            if tracked_tool_calls:
+                logger.info(f"Adding tool call message with {len(tracked_tool_calls)} calls")
+                tool_call_message = ConversationMessage(
+                    type=MessageType.TOOL_CALL,
+                    parts=[MessagePart(type="text", content=f"Executed {len(tracked_tool_calls)} tool calls")],
+                    tool_calls=tracked_tool_calls,
+                    timestamp=datetime.now().isoformat()
+                )
+                context.add_message(tool_call_message)
+
+            # Add tool result message
+            if tracked_tool_results:
+                logger.info(f"Adding tool result message with {len(tracked_tool_results)} results")
+                tool_result_message = ConversationMessage(
+                    type=MessageType.TOOL_RESULT,
+                    parts=[MessagePart(type="text", content=f"Tool results for {len(tracked_tool_results)} calls")],
+                    tool_results=tracked_tool_results,
+                    timestamp=datetime.now().isoformat()
+                )
+                context.add_message(tool_result_message)
+
+            # Save the updated context
+            self._save_conversation_context(context)
+            logger.info("Successfully added tool calls and results to context")
+            
+        except Exception as e:
+            logger.error(f"Failed to add tool calls to context: {e}", exc_info=True)
+            raise
+
+    def _add_generic_tool_usage_to_context(self, prompt: str, response: str) -> None:
+        """Add a generic tool usage indicator when tools might have been used transparently."""
+        try:
+            context = self._load_conversation_context()
+            if not context:
+                logger.debug("No conversation context found, skipping generic tool usage tracking")
+                return
+
+            # Check if the response seems to contain tool-derived information
+            # This is a heuristic approach since we can't detect tool usage directly
+            tool_indicators = [
+                "based on the search",
+                "according to the data",
+                "from the database",
+                "search results show",
+                "the query returned",
+                "found in the system"
+            ]
+            
+            likely_used_tools = any(indicator in response.lower() for indicator in tool_indicators)
+            
+            if likely_used_tools:
+                logger.info("Response appears to contain tool-derived information, adding to context")
+                
+                # Create a generic tool usage message
+                tool_usage_message = ConversationMessage(
+                    type=MessageType.TOOL_CALL,
+                    parts=[MessagePart(type="text", content="MCP tools may have been used transparently by the SDK")],
+                    tool_calls=[ToolCall(
+                        tool_name="mcp_transparent_tools",
+                        tool_id=f"transparent_{int(datetime.now().timestamp() * 1000)}",
+                        parameters={"prompt_hint": prompt[:100] + "..." if len(prompt) > 100 else prompt}
+                    )],
+                    timestamp=datetime.now().isoformat()
+                )
+                context.add_message(tool_usage_message)
+                self._save_conversation_context(context)
+                logger.debug("Added generic tool usage indicator to context")
+            else:
+                logger.debug("Response doesn't appear to contain tool-derived information")
+                
+        except Exception as e:
+            logger.error(f"Failed to add generic tool usage to context: {e}", exc_info=True)
 
 
 # Enhanced Gemini class that includes MCP support

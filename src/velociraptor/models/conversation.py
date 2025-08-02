@@ -150,10 +150,15 @@ class ConversationHistory:
             elif message.type == MessageType.TOOL_CALL:
                 if message.tool_calls:
                     for tool_call in message.tool_calls:
-                        prompt_parts.append(f"Tool Call: {tool_call.tool_name}({tool_call.parameters})")
+                        params_str = ", ".join([f"{k}={v}" for k, v in tool_call.parameters.items()])
+                        prompt_parts.append(f"Tool Call: {tool_call.tool_name}({params_str})")
             elif message.type == MessageType.TOOL_RESULT:
                 if message.tool_results:
                     for tool_result in message.tool_results:
-                        prompt_parts.append(f"Tool Result: {tool_result.result}")
+                        result_preview = str(tool_result.result)[:200] + ("..." if len(str(tool_result.result)) > 200 else "")
+                        if tool_result.error:
+                            prompt_parts.append(f"Tool Result (Error): {tool_result.error}")
+                        else:
+                            prompt_parts.append(f"Tool Result: {result_preview}")
         
         return "\n\n".join(prompt_parts)
