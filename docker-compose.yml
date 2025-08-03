@@ -81,3 +81,18 @@ services:
     restart: unless-stopped
     stdin_open: true
     tty: true
+
+  recursive-mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile.recursive-mcp
+    image: velociraptor/recursive-mcp:latest
+    env_file:
+      - .env.docker
+    environment:
+      - RECURSIVE_MCP_DEPTH=0
+    depends_on:
+      - neo4j
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

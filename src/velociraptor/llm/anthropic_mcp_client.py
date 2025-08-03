@@ -16,6 +16,8 @@ from dataclasses import dataclass
 import subprocess
 from datetime import datetime
 import time
+import os
+import json
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -258,6 +260,16 @@ class MCPAnthropicClient:
                 description="Sequential thinking server for structured reasoning and step-by-step problem solving"
             )
         ]
+        
+        # Add recursive server - depth limiting is now handled by the tool itself
+        self.servers.append(
+            MCPServer(
+                name="recursive_mcp",
+                container_pattern="recursive-mcp",
+                module_path="velociraptor.mcp.recursive_mcp",
+                description="Recursive query processing with depth limiting for complex multi-step analysis"
+            )
+        )
 
     async def __aenter__(self):
         """Async context manager entry - connect to all MCP servers."""
@@ -774,6 +786,10 @@ class MCPAnthropicClient:
                     # Execute the tool
                     tool_result = await self._call_mcp_tool(tool_name, arguments)
                     
+                    # Write context to separate file for recursive calls
+                    if tool_name == "recursive_query" and arguments.get("depth", 0) > 0:
+                        await self._write_recursive_context(arguments.get("depth", 0), conversation_messages, tool_result)
+                    
                     # Create tool result record
                     tool_result_obj = ToolResult(
                         tool_call_id=tool_id,
@@ -833,6 +849,53 @@ class MCPAnthropicClient:
         for i, server in enumerate(self.servers):
             status[server.name] = i < len(self.mcp_sessions)
         return status
+    
+    async def _write_recursive_context(self, depth: int, conversation_messages: List[Dict[str, Any]], tool_result: Dict[str, Any]) -> None:
+        """Write context to a separate file for recursive calls to isolate context."""
+        try:
+            try:
+                import aiofiles
+            except ImportError:
+                logger.warning("aiofiles not available, using synchronous file write for recursive context")
+                # Fallback to synchronous write
+                context_data = {
+                    "depth": depth,
+                    "timestamp": datetime.now().isoformat(),
+                    "conversation_messages": conversation_messages,
+                    "tool_result": tool_result,
+                    "metadata": {
+                        "type": "recursive_context",
+                        "version": "1.0"
+                    }
+                }
+                context_filename = f".context.{depth}.json"
+                with open(context_filename, 'w') as f:
+                    f.write(json.dumps(context_data, indent=2, default=str))
+                logger.info(f"Wrote recursive context to {context_filename} for depth {depth}")
+                return
+            
+            # Create context data
+            context_data = {
+                "depth": depth,
+                "timestamp": datetime.now().isoformat(),
+                "conversation_messages": conversation_messages,
+                "tool_result": tool_result,
+                "metadata": {
+                    "type": "recursive_context",
+                    "version": "1.0"
+                }
+            }
+            
+            # Write to .context.{depth}.json file
+            context_filename = f".context.{depth}.json"
+            
+            async with aiofiles.open(context_filename, 'w') as f:
+                await f.write(json.dumps(context_data, indent=2, default=str))
+            
+            logger.info(f"Wrote recursive context to {context_filename} for depth {depth}")
+            
+        except Exception as e:
+            logger.error(f"Failed to write recursive context: {e}", exc_info=True)
 
 
 # Enhanced Anthropic class that includes MCP support

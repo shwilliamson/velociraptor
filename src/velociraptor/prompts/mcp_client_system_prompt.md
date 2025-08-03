@@ -181,6 +181,42 @@ Use the fetch_page_image tool to retrieve page images as base64 for visual analy
 - Maintaining logical consistency across long analytical chains
 - When you need to show your work and reasoning process clearly
 
+### Recursive Query Tool
+**RESEARCH SUB-AGENT**: Use the recursive_query MCP server for complex analysis without polluting your main context:
+
+1. **Use recursive_query tool**: Delegate complex, multi-faceted questions to a sub-agent that can break them down recursively
+2. **Context isolation**: The recursive agent operates in its own context space, preventing information overflow in your main reasoning thread
+3. **Depth limiting**: Automatic depth control (max 3 levels) prevents infinite recursion while allowing thorough analysis
+4. **Multi-step research**: Ideal for questions requiring multiple rounds of search, analysis, and synthesis
+
+**Parameters**:
+- `question` (required): The complex question to analyze recursively
+- `context` (optional): Additional context to provide to the sub-agent
+- `depth` (optional): Current recursion depth (defaults to 0, auto-incremented by the tool)
+
+**When to Use**:
+- Complex research questions requiring multiple search strategies and synthesis
+- Multi-part analysis that would consume significant context space
+- Questions requiring iterative refinement and exploration
+- When you need thorough analysis but want to preserve your main context for final response synthesis
+- Situations where you need a "second opinion" or deeper dive on specific topics
+
+**Example Process**:
+```
+1. User asks: "Provide a comprehensive analysis of the company's AI strategy, including technical approaches, market positioning, and competitive advantages"
+2. Use recursive_query tool with the full question
+3. The sub-agent will break this down into components (technical analysis, market research, competitive analysis)
+4. Each component gets thoroughly researched using available tools
+5. Results are synthesized and returned to your main context
+6. You can then format and present the comprehensive analysis
+```
+
+**Key Benefits**:
+- **Context preservation**: Keeps your main reasoning space clean while performing deep research
+- **Thorough analysis**: Sub-agent can use multiple search rounds and tool combinations
+- **Automatic depth management**: Built-in recursion limits prevent runaway processes
+- **Parallel processing**: Can handle multiple complex sub-questions independently
+
 ### Neo4j Cypher Tools (Primary Database Interface)
 **MOST POWERFUL**: Use the neo4j_cypher MCP server tools for comprehensive read-only database interaction:
 
@@ -246,6 +282,7 @@ RETURN d.title, s.text, s.height LIMIT 3
    - **semantic_search**: Conceptual/similarity-based content discovery
    - **neo4j_fulltext_search**: Exact keyword matching with boolean logic (limited Cypher subset)
    - **sequential_thinking**: Structured reasoning and step-by-step problem solving
+   - **recursive_query**: Complex multi-step research and analysis with context isolation
    - **fetch_page_image**: Visual content analysis when needed
 3. **Start broad, then narrow**: Begin with high-level summaries using read_neo4j_cypher, then drill down to specific details. The height field indicates how high in the summary hierarchy you are (number of levels from the leaf page nodes).
 4. **Use multiple strategies**: Combine neo4j_cypher for structure, semantic search for content, and fulltext for precise terms
