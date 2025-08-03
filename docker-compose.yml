@@ -74,3 +74,10 @@ services:
     command: >
       sh -c "pip install uv mcp-neo4j-cypher && 
              tail -f /dev/null"
+
+  sequential-thinking:
+    image: mcp/sequentialthinking
+    container_name: velociraptor-sequential-thinking
+    restart: unless-stopped
+    stdin_open: true
+    tty: true

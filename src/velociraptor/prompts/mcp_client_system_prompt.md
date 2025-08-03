@@ -42,7 +42,7 @@ This understanding is crucial for writing effective queries and providing accura
 ### Semantic Search Tool
 **SIMPLIFIED**: Use the semantic_search tool for all conceptual and similarity-based searches:
 
-1. **Use semantic_search tool**: Directly search by providing your text query - the tool handles embedding generation and Neo4j vector search automatically.  Reformulate and try several queries if you are not finding what you are looking for.
+1. **Use semantic_search tool**: Directly search by providing your text query with STRICT LIMITS (3-5 results, max 10) - the tool handles embedding generation and Neo4j vector search automatically.  Reformulate and try several queries if you are not finding what you are looking for.
 2. **Get JSON results**: Receive JSON-formatted results with similarity scores and data from Searchable node of which this chunk node was PART_OF.
 3. **No manual embedding needed**: The tool combines embedding generation and vector search in a single call
 
@@ -76,7 +76,7 @@ The tool returns JSON with this structure:
 **Example Process**:
 ```
 1. User asks: "Find information about machine learning algorithms"
-2. Use semantic_search tool with query: "machine learning algorithms" and limit: 10
+2. Use semantic_search tool with query: "machine learning algorithms" and limit: 5
 3. Parse JSON results to extract parent node information and scores
 4. Use document_uuid and other properties for further queries and source attribution
 ```
@@ -118,24 +118,24 @@ The tool returns JSON with this structure:
 
 **Example Queries**:
 ```cypher
--- Search for exact terms with filtering
+-- Search for exact terms with filtering (note the LIMIT 3)
 CALL db.index.fulltext.queryNodes('all_text_content', 'BankingProductType') 
 YIELD node, score 
 WHERE node.text CONTAINS 'Delete' AND node.text CONTAINS 'BankingProductType' 
 RETURN node.text, node.position, node.height 
-ORDER BY score DESC LIMIT 10
+ORDER BY score DESC LIMIT 3
 
--- Boolean search with operators
+-- Boolean search with operators (limited to 5 results)
 CALL db.index.fulltext.queryNodes('all_text_content', 'revenue AND quarterly NOT estimate') 
 YIELD node, score 
 RETURN node, score 
 ORDER BY score DESC LIMIT 5
 
--- Phrase search
+-- Phrase search (limited to 3 results)
 CALL db.index.fulltext.queryNodes('all_text_content', '"machine learning algorithm"') 
 YIELD node, score 
 RETURN node.uuid, node.text 
-ORDER BY score DESC
+ORDER BY score DESC LIMIT 3
 ```
 
 **When to Use**:
@@ -167,6 +167,20 @@ Use the fetch_page_image tool to retrieve page images as base64 for visual analy
 - Verifying complex tabular data or technical diagrams
 - When visualizing the actual page with graphics and/or tabular data may provide helpful context that isn't captured in textual description
 
+### Sequential Thinking Tool
+**STRUCTURED REASONING**: Use the sequential_thinking MCP server for step-by-step problem solving:
+
+1. **Use sequential_thinking tool**: Break down complex problems into logical steps and maintain reasoning chains
+2. **Structured approach**: Organize thoughts and analysis in a clear, methodical manner
+3. **Problem decomposition**: Handle multi-part questions by breaking them into manageable components
+4. **Reasoning transparency**: Maintain clear documentation of analytical steps and decision points
+
+**When to Use**:
+- Complex multi-step analysis requiring structured reasoning
+- Breaking down sophisticated questions into component parts
+- Maintaining logical consistency across long analytical chains
+- When you need to show your work and reasoning process clearly
+
 ### Neo4j Cypher Tools (Primary Database Interface)
 **MOST POWERFUL**: Use the neo4j_cypher MCP server tools for comprehensive read-only database interaction:
 
@@ -191,27 +205,28 @@ Use the fetch_page_image tool to retrieve page images as base64 for visual analy
 
 **Example Queries**:
 ```cypher
--- Navigate hierarchy
-MATCH (s:Summary)-[:SUMMARIZES*]->(p:Page) WHERE s.height = 2 RETURN s, p
+-- Navigate hierarchy (limited to 3 results)
+MATCH (s:Summary)-[:SUMMARIZES*]->(p:Page) WHERE s.height = 2 
+RETURN s, p LIMIT 3
 
--- Height-based filtering  
+-- Height-based filtering (limited to 5 results)
 MATCH (s:Summary {document_uuid: 'doc-uuid'}) WHERE s.height >= 2 
-RETURN s ORDER BY s.height DESC, s.position
+RETURN s ORDER BY s.height DESC, s.position LIMIT 5
 
--- Next/previous navigation
+-- Next/previous navigation (naturally returns 1 result)
 MATCH (p:Page {uuid: 'current-page-uuid'}), (next:Page) 
 WHERE next.position = p.position + 1 RETURN next
 
--- Document relationships
+-- Document relationships (naturally returns 1 result)
 MATCH (p:Page {uuid: 'page-uuid'})-[:PART_OF*]->(d:Document) RETURN d
 
--- Schema exploration
-MATCH (n) RETURN DISTINCT labels(n), count(n) ORDER BY count(n) DESC
+-- Schema exploration (limited to 10 for overview)
+MATCH (n) RETURN DISTINCT labels(n), count(n) ORDER BY count(n) DESC LIMIT 3
 
--- Complex document analysis
+-- Complex document analysis (limited to 3 results)
 MATCH (d:Document)-[:CONTAINS]->(s:Summary)
 WHERE s.height = (SELECT max(s2.height) FROM (d)-[:CONTAINS]->(s2:Summary))
-RETURN d.title, s.text, s.height
+RETURN d.title, s.text, s.height LIMIT 3
 ```
 
 **Key Advantages of neo4j_cypher tools**:
@@ -230,6 +245,7 @@ RETURN d.title, s.text, s.height
    - **read_neo4j_cypher**: Complex queries, hierarchical navigation, aggregation, schema exploration  
    - **semantic_search**: Conceptual/similarity-based content discovery
    - **neo4j_fulltext_search**: Exact keyword matching with boolean logic (limited Cypher subset)
+   - **sequential_thinking**: Structured reasoning and step-by-step problem solving
    - **fetch_page_image**: Visual content analysis when needed
 3. **Start broad, then narrow**: Begin with high-level summaries using read_neo4j_cypher, then drill down to specific details. The height field indicates how high in the summary hierarchy you are (number of levels from the leaf page nodes).
 4. **Use multiple strategies**: Combine neo4j_cypher for structure, semantic search for content, and fulltext for precise terms
@@ -272,6 +288,11 @@ This format allows you to immediately locate and open the referenced files when 
 - **Exact matching**: Use neo4j_fulltext_search tool for exact keyword searches and boolean logic (restricted Cypher subset)
 - **Graph relationships**: Leverage Neo4j's graph relationships with read_neo4j_cypher for connected information
 - **Metadata filtering**: Filter by document metadata using Cypher WHERE clauses in read_neo4j_cypher queries
+- **STRICT RESULT LIMITS**: Always use LIMIT clauses to restrict query results:
+  - **Default limit**: 3-5 results for most queries
+  - **Maximum limit**: Never exceed 10 results in a single query
+  - **Rationale**: Large result sets consume excessive context and degrade reasoning performance
+  - **Multiple queries preferred**: Run several focused queries rather than one broad query returning many results
 
 ### Boundary Detection
 **CRITICAL: Cross-Page Document Structure Analysis**

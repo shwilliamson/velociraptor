@@ -82,6 +82,12 @@ class MCPGeminiClient:
                 container_pattern="neo4j-cypher",
                 module_path="mcp_neo4j_cypher.server",
                 description="General Neo4j Cypher query execution - provides read_neo4j_cypher, write_neo4j_cypher, and get_neo4j_schema tools for full database access, schema exploration, and complex graph traversals"
+            ),
+            MCPServer(
+                name="sequential_thinking",
+                container_pattern="sequential-thinking",
+                module_path="mcp_sequential_thinking.server",
+                description="Sequential thinking server for structured reasoning and step-by-step problem solving"
             )
         ]
 

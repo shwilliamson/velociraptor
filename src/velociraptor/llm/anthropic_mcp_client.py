@@ -134,12 +134,7 @@ class AnthropicClient:
             # Build request parameters
             request_params = {
                 "model": model,
-                "max_tokens": 65536,
                 "messages": messages,
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": 50000
-                }
             }
             
             if tools:
@@ -255,6 +250,12 @@ class MCPAnthropicClient:
                 container_pattern="neo4j-cypher",
                 module_path="mcp_neo4j_cypher.server",
                 description="General Neo4j Cypher query execution - provides read_neo4j_cypher, write_neo4j_cypher, and get_neo4j_schema tools for full database access, schema exploration, and complex graph traversals"
+            ),
+            MCPServer(
+                name="sequential_thinking",
+                container_pattern="sequential-thinking",
+                module_path="mcp_sequential_thinking.server",
+                description="Sequential thinking server for structured reasoning and step-by-step problem solving"
             )
         ]
 
@@ -531,13 +532,11 @@ class MCPAnthropicClient:
             "messages": messages
         }
         
-        # Only enable thinking for first turn (single user message)
-        # Multi-turn conversations with thinking have complex requirements
-        if len(messages) == 1 and messages[0]["role"] == "user":
-            request_params["thinking"] = {
-                "type": "enabled",
-                "budget_tokens": 50000
-            }
+        # Always enable thinking - we'll handle the complexity properly
+        request_params["thinking"] = {
+            "type": "enabled", 
+            "budget_tokens": 50000
+        }
         
         if tools:
             request_params["tools"] = tools
@@ -559,6 +558,8 @@ class MCPAnthropicClient:
                         if hasattr(event.content_block, 'type'):
                             if event.content_block.type == "text":
                                 response_content.append({"type": "text", "text": ""})
+                            elif event.content_block.type == "thinking":
+                                response_content.append({"type": "thinking", "thinking": "", "signature": ""})
                             elif event.content_block.type == "tool_use":
                                 response_content.append({
                                     "type": "tool_use",
@@ -569,9 +570,11 @@ class MCPAnthropicClient:
                     elif event.type == "content_block_delta":
                         # Handle streaming content
                         if hasattr(event.delta, 'text'):
-                            # Text content
+                            # Text content or thinking content
                             if response_content and response_content[-1].get("type") == "text":
                                 response_content[-1]["text"] += event.delta.text
+                            elif response_content and response_content[-1].get("type") == "thinking":
+                                response_content[-1]["thinking"] += event.delta.text
                         elif hasattr(event.delta, 'partial_json'):
                             # Tool use input (streaming JSON)
                             if response_content and response_content[-1].get("type") == "tool_use":
@@ -579,6 +582,10 @@ class MCPAnthropicClient:
                                 if "partial_input" not in response_content[-1]:
                                     response_content[-1]["partial_input"] = ""
                                 response_content[-1]["partial_input"] += event.delta.partial_json
+                        elif hasattr(event.delta, 'type') and event.delta.type == "signature_delta":
+                            # Handle signature delta for thinking blocks
+                            if response_content and response_content[-1].get("type") == "thinking" and hasattr(event.delta, 'signature'):
+                                response_content[-1]["signature"] = event.delta.signature
                     elif event.type == "content_block_stop":
                         # Content block finished - finalize tool use input if needed
                         if response_content and response_content[-1].get("type") == "tool_use":
@@ -591,11 +598,23 @@ class MCPAnthropicClient:
                                 except json.JSONDecodeError as e:
                                     logger.error(f"Failed to parse tool input JSON: {e}")
                                     response_content[-1]["input"] = {}
+                                    # Still remove partial_input even on error
+                                    del response_content[-1]["partial_input"]
                     elif event.type == "message_delta":
                         response_stop_reason = event.delta.stop_reason
                     elif event.type == "message_stop":
                         # Message finished
                         break
+        
+        # Final cleanup: ensure no partial_input fields remain in tool_use blocks
+        for content_item in response_content:
+            if content_item.get("type") == "tool_use" and "partial_input" in content_item:
+                import json
+                try:
+                    content_item["input"] = json.loads(content_item["partial_input"])
+                except json.JSONDecodeError:
+                    content_item["input"] = {}
+                del content_item["partial_input"]
         
         return {
             "content": response_content,
@@ -656,22 +675,23 @@ class MCPAnthropicClient:
                 # Check if response contains tool calls
                 tool_calls = []
                 response_text = ""
-                
-                logger.info(f"Raw response: {response}")
+                thinking_text = ""
                 
                 if "content" in response:
-                    logger.info(f"Response content: {response['content']}")
                     for content_item in response["content"]:
-                        logger.info(f"Processing content item: {content_item}")
                         if isinstance(content_item, dict):
                             if content_item.get("type") == "text":
                                 response_text += content_item.get("text", "")
+                            elif content_item.get("type") == "thinking":
+                                thinking_text += content_item.get("content", "")
                             elif content_item.get("type") == "tool_use":
                                 tool_calls.append(content_item)
                         else:
                             # Handle case where content_item is not a dict (e.g., Anthropic TextBlock)
                             if hasattr(content_item, 'type') and content_item.type == "text":
                                 response_text += getattr(content_item, 'text', "")
+                            elif hasattr(content_item, 'type') and content_item.type == "thinking":
+                                thinking_text += getattr(content_item, 'content', "")
                             elif hasattr(content_item, 'type') and content_item.type == "tool_use":
                                 tool_calls.append({
                                     "type": "tool_use",
@@ -680,6 +700,7 @@ class MCPAnthropicClient:
                                     "input": getattr(content_item, 'input', {})
                                 })
                 
+                logger.info(f"Extracted thinking: '{thinking_text}'")
                 logger.info(f"Extracted response_text: '{response_text}'")
                 logger.info(f"Found {len(tool_calls)} tool calls")
                 
@@ -688,30 +709,49 @@ class MCPAnthropicClient:
                     logger.info(f"Final response received after {turn} turns")
                     return response_text or ""
                 
-                # Add assistant's response (with tool calls) to conversation
+                # Add assistant's response (with proper thinking block ordering) to conversation
                 assistant_content = []
-                if response_text:
-                    assistant_content.append({"type": "text", "text": response_text})
                 
-                for tool_call in tool_calls:
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tool_call.get("id"),
-                        "name": tool_call.get("name"),
-                        "input": tool_call.get("input", {})
-                    })
+                # Extract thinking, text, and tool_use blocks from response
+                thinking_blocks = []
+                text_blocks = []
+                tool_use_blocks = []
+                
+                for content_item in response.get("content", []):
+                    if isinstance(content_item, dict):
+                        if content_item.get("type") == "thinking":
+                            thinking_blocks.append(content_item)
+                        elif content_item.get("type") == "text":
+                            text_blocks.append(content_item)
+                        elif content_item.get("type") == "tool_use":
+                            tool_use_blocks.append(content_item)
+                
+                # Build assistant content in correct order: thinking first, then text, then tool_use
+                assistant_content.extend(thinking_blocks)
+                assistant_content.extend(text_blocks) 
+                assistant_content.extend(tool_use_blocks)
                 
                 conversation_messages.append({"role": "assistant", "content": assistant_content})
                 
-                # Process tool calls and add results
-                logger.info(f"Processing {len(tool_calls)} tool calls in turn {turn}")
+                # Publish thinking content to context manager if available
+                if self.context_manager and thinking_blocks:
+                    full_thinking = ""
+                    for thinking_block in thinking_blocks:
+                        full_thinking += thinking_block.get("content", "")
+                    if full_thinking:
+                        # For now, log the thinking - we may want to add a dedicated method later
+                        logger.info(f"Claude's thinking: {full_thinking[:200]}...")
+                        # You could add: self.context_manager.publish_thinking(full_thinking)
+                
+                # Process tool calls and add results  
+                logger.info(f"Processing {len(tool_use_blocks)} tool calls in turn {turn}")
                 
                 # Track tool calls in context
                 tracked_tool_calls = []
                 tracked_tool_results = []
                 tool_result_content = []
                 
-                for tool_call in tool_calls:
+                for tool_call in tool_use_blocks:
                     tool_name = tool_call.get("name", "")
                     tool_id = tool_call.get("id", f"call_{turn}_{tool_name}_{int(datetime.now().timestamp() * 1000)}")
                     arguments = tool_call.get("input", {})
@@ -766,10 +806,7 @@ class MCPAnthropicClient:
             
         except Exception as e:
             logger.error(f"Error in manual MCP prompt: {e}", exc_info=True)
-            # Fallback to regular Anthropic prompt without MCP
-            logger.info("Falling back to regular Anthropic prompt")
-            fallback_response = await self.anthropic_client.prompt(prompt, attachments)
-            return fallback_response.get("content", [{}])[0].get("text", "")
+            raise
 
     async def get_available_tools(self) -> Dict[str, List[str]]:
         """Get list of available tools from tool registry."""
