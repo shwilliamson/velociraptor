@@ -211,3 +211,4 @@ neo4j_data_volumes/
 .idea
 files
 .context.json
+.env.docker

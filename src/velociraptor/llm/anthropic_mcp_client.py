@@ -549,16 +549,14 @@ class MCPAnthropicClient:
         # Build request parameters
         request_params = {
             "model": "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
-            "max_tokens": 65536,
-            "messages": messages
+            "max_tokens": 20000,
+            "messages": messages,
+            # "thinking": {
+            #     "type": "enabled",
+            #     "budget_tokens": 10000
+            # }
         }
-        
-        # Always enable thinking - we'll handle the complexity properly
-        request_params["thinking"] = {
-            "type": "enabled", 
-            "budget_tokens": 50000
-        }
-        
+
         if tools:
             request_params["tools"] = tools
         
@@ -799,25 +797,71 @@ class MCPAnthropicClient:
                     tracked_tool_results.append(tool_result_obj)
                     
                     # Add tool result to conversation
-                    result_text = ""
+                    result_content = []
+                    has_content = False
+                    
                     if tool_result.get('result'):
                         if isinstance(tool_result.get('result'), list):
                             # Handle list of result items (typical MCP format)
                             for item in tool_result.get('result'):
-                                if isinstance(item, dict) and item.get('type') == 'text':
-                                    result_text += item.get('text', '')
+                                if isinstance(item, dict):
+                                    if item.get('type') == 'text':
+                                        result_content.append({
+                                            "type": "text",
+                                            "text": item.get('text', '')
+                                        })
+                                        has_content = True
+                                    elif item.get('type') == 'image':
+                                        # Handle ImageContent - convert to image_url format
+                                        base64_data = item.get('data', '')
+                                        mime_type = item.get('mimeType', 'image/jpeg')
+                                        if base64_data:
+                                            result_content.append({
+                                                "type": "image_url",
+                                                "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}
+                                            })
+                                            has_content = True
                                 else:
-                                    result_text += str(item)
+                                    # Fallback to text for non-dict items
+                                    result_content.append({
+                                        "type": "text", 
+                                        "text": str(item)
+                                    })
+                                    has_content = True
                         else:
-                            result_text = str(tool_result.get('result'))
+                            # Single result item - convert to text
+                            result_content.append({
+                                "type": "text",
+                                "text": str(tool_result.get('result'))
+                            })
+                            has_content = True
                     
                     if tool_result.get('error'):
-                        result_text += f"\nError: {tool_result.get('error')}"
+                        error_text = f"Error: {tool_result.get('error')}"
+                        if has_content:
+                            # Add error as additional text content
+                            result_content.append({
+                                "type": "text",
+                                "text": error_text
+                            })
+                        else:
+                            # Only error, make it the main content
+                            result_content.append({
+                                "type": "text", 
+                                "text": error_text
+                            })
+                    
+                    # Fallback if no content
+                    if not result_content:
+                        result_content.append({
+                            "type": "text",
+                            "text": "No result"
+                        })
                     
                     tool_result_content.append({
                         "type": "tool_result",
                         "tool_use_id": tool_id,
-                        "content": result_text or "No result"
+                        "content": result_content
                     })
                 
                 # Add tool results as user message

@@ -108,10 +108,13 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
                 )
             ]
         
-        logger.info(f"Processing recursive query at depth {current_depth}: {question[:100]}...")
+        # The depth we'll operate at is current_depth + 1
+        operating_depth = current_depth + 1
+        
+        logger.info(f"Processing recursive query: received depth {current_depth}, operating at depth {operating_depth}: {question[:100]}...")
         
         # Check if we've reached max depth
-        if current_depth >= MAX_RECURSION_DEPTH:
+        if operating_depth > MAX_RECURSION_DEPTH:
             return [
                 TextContent(
                     type="text",
@@ -120,47 +123,48 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
             ]
         
         try:
-            new_depth = current_depth + 1
-            logger.info(f"Making recursive call at depth {new_depth}")
+            logger.info(f"Making recursive call at depth {operating_depth}")
             
             # Create MCP client for recursive call
             mcp_client = MCPAnthropicClient()
             
             async with mcp_client:
                 # Build prompt for recursive analysis that includes recursive_query calls with incremented depth
-                system_context = f"""You are operating at recursion depth {new_depth} of {MAX_RECURSION_DEPTH}.
+                system_context = f"""You are operating at recursion depth {operating_depth} of {MAX_RECURSION_DEPTH}.
 Your role is to answer complex questions by breaking them down into smaller parts.
 
 Current question: {question}
 {f"Additional context: {context}" if context else ""}
 
 You have access to various MCP tools including:
-- recursive_query: Use this to break down complex sub-questions (pass depth={new_depth})
+- recursive_query: Use this to break down complex sub-questions
 - semantic_search: For finding relevant information
 - Neo4j queries for graph-based analysis  
 - Page fetching for retrieving specific content
 - Full-text search capabilities
 
-When you need to use recursive_query for sub-questions, ALWAYS pass depth={new_depth} as a parameter.
+CRITICAL: If you need to use recursive_query for sub-questions, you MUST pass depth={operating_depth} as a parameter. This is mandatory for depth tracking.
+
+Example: recursive_query(question="your sub-question", depth={operating_depth})
 
 Break this question down into smaller components and use available tools to gather information systematically. Provide a comprehensive answer based on your analysis.
 
-Important: You are at depth {new_depth}/{MAX_RECURSION_DEPTH}."""
+Important: You are currently at depth {operating_depth}/{MAX_RECURSION_DEPTH}. Any recursive_query calls must use depth={operating_depth}."""
 
                 # Make the recursive call
                 response = await mcp_client.prompt(system_context)
                 
-                logger.info(f"Completed recursive query at depth {new_depth}")
+                logger.info(f"Completed recursive query at depth {operating_depth}")
                 
                 return [
                     TextContent(
                         type="text",
-                        text=f"[Recursion depth {new_depth}]\n\n{response}"
+                        text=f"[Recursion depth {operating_depth}]\n\n{response}"
                     )
                 ]
                 
         except Exception as e:
-            logger.error(f"Error in recursive query at depth {current_depth}: {e}", exc_info=True)
+            logger.error(f"Error in recursive query at depth {operating_depth}: {e}", exc_info=True)
             return [
                 TextContent(
                     type="text",

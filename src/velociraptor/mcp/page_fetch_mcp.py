@@ -7,7 +7,7 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.models import InitializationOptions
 from mcp.server.stdio import stdio_server
-from mcp.types import Tool, TextContent, ServerCapabilities
+from mcp.types import Tool, TextContent, ImageContent, ServerCapabilities
 
 from velociraptor.utils.logger import get_logger
 
@@ -107,7 +107,7 @@ async def handle_list_tools() -> list[Tool]:
 
 
 @server.call_tool()
-async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
+async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent | ImageContent]:
     """Handle tool calls for page image fetching."""
     if name != "fetch_page_image":
         raise ValueError(f"Unknown tool: {name}")
@@ -179,9 +179,10 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         logger.info(f"Successfully fetched image: {file_path} ({len(image_data)} bytes)")
         
         return [
-            TextContent(
-                type="text",
-                text=base64_data
+            ImageContent(
+                type="image",
+                data=base64_data,
+                mimeType="image/jpeg"
             )
         ]
         
