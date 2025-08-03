@@ -159,17 +159,41 @@ class AnthropicClient:
                             response_usage = event.message.usage
                         elif event.type == "content_block_start":
                             # Initialize content block
-                            pass
+                            if hasattr(event.content_block, 'type'):
+                                if event.content_block.type == "text":
+                                    response_content.append({"type": "text", "text": ""})
+                                elif event.content_block.type == "tool_use":
+                                    response_content.append({
+                                        "type": "tool_use",
+                                        "id": event.content_block.id,
+                                        "name": event.content_block.name,
+                                        "input": {}
+                                    })
                         elif event.type == "content_block_delta":
                             # Handle streaming content - we'll collect it
                             if hasattr(event.delta, 'text'):
                                 # Text content
-                                if not response_content or response_content[-1].get("type") != "text":
-                                    response_content.append({"type": "text", "text": ""})
-                                response_content[-1]["text"] += event.delta.text
+                                if response_content and response_content[-1].get("type") == "text":
+                                    response_content[-1]["text"] += event.delta.text
+                            elif hasattr(event.delta, 'partial_json'):
+                                # Tool use input (streaming JSON)
+                                if response_content and response_content[-1].get("type") == "tool_use":
+                                    # Accumulate the JSON input
+                                    if "partial_input" not in response_content[-1]:
+                                        response_content[-1]["partial_input"] = ""
+                                    response_content[-1]["partial_input"] += event.delta.partial_json
                         elif event.type == "content_block_stop":
-                            # Content block finished
-                            pass
+                            # Content block finished - finalize tool use input if needed
+                            if response_content and response_content[-1].get("type") == "tool_use":
+                                if "partial_input" in response_content[-1]:
+                                    # Parse the accumulated JSON
+                                    import json
+                                    try:
+                                        response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
+                                        del response_content[-1]["partial_input"]
+                                    except json.JSONDecodeError as e:
+                                        logger.error(f"Failed to parse tool input JSON: {e}")
+                                        response_content[-1]["input"] = {}
                         elif event.type == "message_delta":
                             response_stop_reason = event.delta.stop_reason
                         elif event.type == "message_stop":
@@ -493,6 +517,93 @@ class MCPAnthropicClient:
                 
             return final_result
 
+    async def _call_anthropic_with_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        attachments: Optional[List[Attachment]] = None,
+        tools: Optional[List[Dict]] = None
+    ) -> Dict[str, Any]:
+        """Call Anthropic with a list of conversation messages using streaming."""
+        # Build request parameters
+        request_params = {
+            "model": "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
+            "max_tokens": 65536,
+            "messages": messages
+        }
+        
+        # Only enable thinking for first turn (single user message)
+        # Multi-turn conversations with thinking have complex requirements
+        if len(messages) == 1 and messages[0]["role"] == "user":
+            request_params["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": 50000
+            }
+        
+        if tools:
+            request_params["tools"] = tools
+        
+        # Use streaming to handle extended thinking
+        response_content = []
+        response_model = None
+        response_stop_reason = None
+        response_usage = None
+        
+        async with self.anthropic_client.client.messages.stream(**request_params) as stream:
+            async for event in stream:
+                if hasattr(event, 'type'):
+                    if event.type == "message_start":
+                        response_model = event.message.model
+                        response_usage = event.message.usage
+                    elif event.type == "content_block_start":
+                        # Initialize content block
+                        if hasattr(event.content_block, 'type'):
+                            if event.content_block.type == "text":
+                                response_content.append({"type": "text", "text": ""})
+                            elif event.content_block.type == "tool_use":
+                                response_content.append({
+                                    "type": "tool_use",
+                                    "id": event.content_block.id,
+                                    "name": event.content_block.name,
+                                    "input": {}
+                                })
+                    elif event.type == "content_block_delta":
+                        # Handle streaming content
+                        if hasattr(event.delta, 'text'):
+                            # Text content
+                            if response_content and response_content[-1].get("type") == "text":
+                                response_content[-1]["text"] += event.delta.text
+                        elif hasattr(event.delta, 'partial_json'):
+                            # Tool use input (streaming JSON)
+                            if response_content and response_content[-1].get("type") == "tool_use":
+                                # Accumulate the JSON input
+                                if "partial_input" not in response_content[-1]:
+                                    response_content[-1]["partial_input"] = ""
+                                response_content[-1]["partial_input"] += event.delta.partial_json
+                    elif event.type == "content_block_stop":
+                        # Content block finished - finalize tool use input if needed
+                        if response_content and response_content[-1].get("type") == "tool_use":
+                            if "partial_input" in response_content[-1]:
+                                # Parse the accumulated JSON
+                                import json
+                                try:
+                                    response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
+                                    del response_content[-1]["partial_input"]
+                                except json.JSONDecodeError as e:
+                                    logger.error(f"Failed to parse tool input JSON: {e}")
+                                    response_content[-1]["input"] = {}
+                    elif event.type == "message_delta":
+                        response_stop_reason = event.delta.stop_reason
+                    elif event.type == "message_stop":
+                        # Message finished
+                        break
+        
+        return {
+            "content": response_content,
+            "model": response_model,
+            "stop_reason": response_stop_reason,
+            "usage": response_usage.model_dump() if response_usage else None
+        }
+
     async def prompt(
         self, 
         prompt: str, 
@@ -527,14 +638,18 @@ class MCPAnthropicClient:
             turn = 0
             response_text = ""
             
+            # Initialize conversation messages
+            conversation_messages = [{"role": "user", "content": prompt}]
+            
             while turn < max_turns:
                 turn += 1
                 logger.debug(f"Conversation turn {turn}")
                 
-                # Call Anthropic with current conversation state
-                response = await self.anthropic_client.prompt(
-                    prompt=prompt,
-                    attachments=attachments if turn == 1 else None,  # Only include attachments on first turn
+                # Call Anthropic with current conversation messages
+                # We need to modify the base client to accept messages directly
+                response = await self._call_anthropic_with_messages(
+                    messages=conversation_messages,
+                    attachments=attachments if turn == 1 else None,
                     tools=self.tool_definitions if self.tool_definitions else None
                 )
                 
@@ -573,12 +688,28 @@ class MCPAnthropicClient:
                     logger.info(f"Final response received after {turn} turns")
                     return response_text or ""
                 
-                # Process tool calls
+                # Add assistant's response (with tool calls) to conversation
+                assistant_content = []
+                if response_text:
+                    assistant_content.append({"type": "text", "text": response_text})
+                
+                for tool_call in tool_calls:
+                    assistant_content.append({
+                        "type": "tool_use",
+                        "id": tool_call.get("id"),
+                        "name": tool_call.get("name"),
+                        "input": tool_call.get("input", {})
+                    })
+                
+                conversation_messages.append({"role": "assistant", "content": assistant_content})
+                
+                # Process tool calls and add results
                 logger.info(f"Processing {len(tool_calls)} tool calls in turn {turn}")
                 
                 # Track tool calls in context
                 tracked_tool_calls = []
                 tracked_tool_results = []
+                tool_result_content = []
                 
                 for tool_call in tool_calls:
                     tool_name = tool_call.get("name", "")
@@ -604,11 +735,30 @@ class MCPAnthropicClient:
                     )
                     tracked_tool_results.append(tool_result_obj)
                     
-                    # Update prompt with tool result for next turn
-                    result_text = f"\n\nTool {tool_name} (id: {tool_id}) returned: {tool_result.get('result', 'No result')}"
+                    # Add tool result to conversation
+                    result_text = ""
+                    if tool_result.get('result'):
+                        if isinstance(tool_result.get('result'), list):
+                            # Handle list of result items (typical MCP format)
+                            for item in tool_result.get('result'):
+                                if isinstance(item, dict) and item.get('type') == 'text':
+                                    result_text += item.get('text', '')
+                                else:
+                                    result_text += str(item)
+                        else:
+                            result_text = str(tool_result.get('result'))
+                    
                     if tool_result.get('error'):
                         result_text += f"\nError: {tool_result.get('error')}"
-                    prompt += result_text
+                    
+                    tool_result_content.append({
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": result_text or "No result"
+                    })
+                
+                # Add tool results as user message
+                conversation_messages.append({"role": "user", "content": tool_result_content})
             
             # If we reach max turns, return what we have
             logger.warning(f"Reached maximum turns ({max_turns}), returning current response")
