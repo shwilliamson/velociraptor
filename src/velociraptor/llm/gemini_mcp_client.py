@@ -436,7 +436,7 @@ class MCPGeminiClient:
             config = GenerateContentConfig(**config_params) if config_params else None
 
             # Start conversation loop for multi-turn tool calling
-            max_turns = 10  # Prevent infinite loops
+            max_turns = 25  # Prevent infinite loops
             turn = 0
             response_text = ""  # Initialize response_text
             
