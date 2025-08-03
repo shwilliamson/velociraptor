@@ -1,29 +1,24 @@
-from contextlib import AsyncExitStack
-from typing import Optional, Dict, List, Any
-from dataclasses import dataclass
 import subprocess
-import json
-from pathlib import Path
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional, Dict, List, Any
+# Forward reference for type hints
+from typing import TYPE_CHECKING
 
+from google.genai.types import GenerateContentConfig, FunctionDeclaration, Tool
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from google.genai.types import GenerateContentConfig, FunctionDeclaration, Tool
 
 from velociraptor.llm.gemini import Gemini
 from velociraptor.models.attachment import Attachment
 from velociraptor.models.conversation import (
-    ConversationHistory, 
-    ConversationMessage, 
-    MessagePart, 
-    MessageType,
+    ConversationHistory,
     ToolCall,
     ToolResult
 )
 from velociraptor.utils.logger import get_logger
 
-# Forward reference for type hints
-from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from velociraptor.utils.context_manager import ContextManager
 

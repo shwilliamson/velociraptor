@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# vr - CLI wrapper for Velociraptor REPL interface
+# Usage: vr
+
+set -euo pipefail
+
+# Get the directory of this script, resolving symlinks
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# Resolve symlinks to get the actual script location
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            echo "Usage: vr [options]"
+            echo ""
+            echo "Start Velociraptor REPL - an interactive terminal interface"
+            echo ""
+            echo "Options:"
+            echo "  -h, --help    Show this help message"
+            echo ""
+            echo "Commands (within REPL):"
+            echo "  /clear        Clear conversation context and start new session"
+            echo "  /help         Show available commands"
+            echo "  Ctrl+C        Exit REPL"
+            echo "  Ctrl+D        Exit REPL"
+            echo ""
+            echo "Examples:"
+            echo "  vr            Start interactive REPL session"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1" >&2
+            echo "Use 'vr --help' for usage information" >&2
+            exit 1
+            ;;
+        *)
+            echo "Error: vr does not accept positional arguments" >&2
+            echo "Use 'vr --help' for usage information" >&2
+            exit 1
+            ;;
+    esac
+done
+
+# Change to project root directory
+cd "$PROJECT_ROOT"
+
+# Execute the REPL with proper Python path
+exec env PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}" \
+    python "$PROJECT_ROOT/src/velociraptor/scripts/vr.py"
