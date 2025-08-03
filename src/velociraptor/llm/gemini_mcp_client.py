@@ -178,6 +178,15 @@ class MCPGeminiClient:
                     ],
                     env=None
                 )
+            elif server.name == "sequential_thinking":
+                server_params = StdioServerParameters(
+                    command="docker",
+                    args=[
+                        "exec", "-i", server.container_name,
+                        "node", "dist/index.js"
+                    ],
+                    env=None
+                )
             else:
                 server_params = StdioServerParameters(
                     command="docker",

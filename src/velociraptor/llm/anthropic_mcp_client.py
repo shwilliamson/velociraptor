@@ -346,6 +346,15 @@ class MCPAnthropicClient:
                     ],
                     env=None
                 )
+            elif server.name == "sequential_thinking":
+                server_params = StdioServerParameters(
+                    command="docker",
+                    args=[
+                        "exec", "-i", server.container_name,
+                        "node", "dist/index.js"
+                    ],
+                    env=None
+                )
             else:
                 server_params = StdioServerParameters(
                     command="docker",
@@ -699,9 +708,7 @@ class MCPAnthropicClient:
                                     "name": getattr(content_item, 'name', ''),
                                     "input": getattr(content_item, 'input', {})
                                 })
-                
-                logger.info(f"Extracted thinking: '{thinking_text}'")
-                logger.info(f"Extracted response_text: '{response_text}'")
+
                 logger.info(f"Found {len(tool_calls)} tool calls")
                 
                 if not tool_calls:
