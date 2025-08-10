@@ -774,7 +774,9 @@ class MCPAnthropicClient:
                         if content_item.get("type") == "thinking":
                             thinking_blocks.append(content_item)
                         elif content_item.get("type") == "text":
-                            text_blocks.append(content_item)
+                            # Only add text blocks if they have non-empty text content
+                            if content_item.get("text", "").strip():
+                                text_blocks.append(content_item)
                         elif content_item.get("type") == "tool_use":
                             tool_use_blocks.append(content_item)
                 
