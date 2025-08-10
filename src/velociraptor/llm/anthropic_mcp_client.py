@@ -57,23 +57,43 @@ class MCPServer:
 
 
 class AnthropicClient:
-    """Anthropic client using AWS Bedrock."""
+    """Anthropic client supporting both AWS Bedrock and direct Anthropic API."""
     
-    def __init__(self, aws_region: str = "us-east-1"):
+    def __init__(self, aws_region: str = "us-east-1", use_bedrock: Optional[bool] = None):
         if not ANTHROPIC_AVAILABLE:
             raise ImportError("anthropic SDK is required. Install with: pip install 'anthropic[bedrock]'")
         
         self.aws_region = aws_region
+        
+        # Determine which endpoint to use
+        if use_bedrock is None:
+            # Check environment variable, default to Bedrock if not specified
+            use_bedrock_env = os.getenv('ANTHROPIC_USE_BEDROCK', 'true').lower()
+            self.use_bedrock = use_bedrock_env in ('true', '1', 'yes')
+        else:
+            self.use_bedrock = use_bedrock
+            
         self.client = None
         self._initialize_client()
     
     def _initialize_client(self) -> None:
-        """Initialize Anthropic Bedrock client."""
-        # Use Anthropic's built-in Bedrock client
-        self.client = anthropic.AsyncAnthropicBedrock(
-            aws_region=self.aws_region
-        )
-        logger.info(f"Initialized Anthropic Bedrock client for region {self.aws_region}")
+        """Initialize Anthropic client (either Bedrock or direct API)."""
+        if self.use_bedrock:
+            # Use Anthropic's built-in Bedrock client
+            self.client = anthropic.AsyncAnthropicBedrock(
+                aws_region=self.aws_region
+            )
+            logger.info(f"Initialized Anthropic Bedrock client for region {self.aws_region}")
+        else:
+            # Use direct Anthropic API
+            api_key = os.getenv('ANTHROPIC_API_KEY')
+            if not api_key:
+                raise ValueError("ANTHROPIC_API_KEY environment variable is required for direct Anthropic API access")
+            
+            self.client = anthropic.AsyncAnthropic(
+                api_key=api_key
+            )
+            logger.info("Initialized direct Anthropic API client")
     
     async def prompt(
         self, 
@@ -81,7 +101,7 @@ class AnthropicClient:
         attachments: Optional[List[Attachment]] = None,
         response_json_schema: Optional[Dict] = None,
         tools: Optional[List[Dict]] = None,
-        model: str = "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0" #"anthropic.claude-sonnet-4-20250514-v1:0"
+        model: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Submit a prompt to Anthropic Claude.
@@ -134,8 +154,16 @@ class AnthropicClient:
                         raise
             
             # Build request parameters
+            if model is None:
+                # Use default model based on endpoint
+                if self.use_bedrock:
+                    model = "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0"
+                else:
+                    model = "claude-3-5-sonnet-20241022"  # Direct API model
+            
             request_params = {
                 "model": model,
+                "max_tokens": 4096,  # Add max_tokens for direct API
                 "messages": messages,
             }
             
@@ -184,7 +212,6 @@ class AnthropicClient:
                             if response_content and response_content[-1].get("type") == "tool_use":
                                 if "partial_input" in response_content[-1]:
                                     # Parse the accumulated JSON
-                                    import json
                                     try:
                                         response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
                                         del response_content[-1]["partial_input"]
@@ -215,8 +242,8 @@ class AnthropicClient:
 class MCPAnthropicClient:
     """MCP-enhanced Anthropic client using manual function calling for full conversational control."""
 
-    def __init__(self, context_manager: Optional['ContextManager'] = None, aws_region: str = "us-east-1", recursion_depth: int = 0):
-        self.anthropic_client = AnthropicClient(aws_region=aws_region)
+    def __init__(self, context_manager: Optional['ContextManager'] = None, aws_region: str = "us-east-1", recursion_depth: int = 0, use_bedrock: Optional[bool] = None):
+        self.anthropic_client = AnthropicClient(aws_region=aws_region, use_bedrock=use_bedrock)
         self.exit_stack: Optional[AsyncExitStack] = None
         self.mcp_sessions: List[ClientSession] = []
         self.context_manager = context_manager
@@ -553,10 +580,17 @@ class MCPAnthropicClient:
         """Call Anthropic with a list of conversation messages using streaming."""
         import asyncio
         
-        # Build request parameters
+        # Build request parameters  
+        if self.anthropic_client.use_bedrock:
+            model = "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0"
+            max_tokens = 20000
+        else:
+            model = "claude-sonnet-4-20250514"
+            max_tokens = 20000
+            
         request_params = {
-            "model": "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
-            "max_tokens": 20000,
+            "model": model,
+            "max_tokens": max_tokens,
             "messages": messages,
             # "thinking": {
             #     "type": "enabled",
@@ -566,6 +600,7 @@ class MCPAnthropicClient:
 
         if tools:
             request_params["tools"] = tools
+            logger.debug(f"Sending tools to Anthropic API ({'Bedrock' if self.anthropic_client.use_bedrock else 'Direct'}): {json.dumps(tools, indent=2)}")
         
         # Retry logic for rate limiting
         max_retries = 3
@@ -593,42 +628,56 @@ class MCPAnthropicClient:
                                     elif event.content_block.type == "thinking":
                                         response_content.append({"type": "thinking", "thinking": "", "signature": ""})
                                     elif event.content_block.type == "tool_use":
+                                        logger.debug(f"Tool use content_block attributes: {dir(event.content_block)}")
+                                        logger.debug(f"Tool use content_block input: {getattr(event.content_block, 'input', 'NO_INPUT_ATTR')}")
+                                        # Use the actual input from the content block instead of initializing to {}
+                                        actual_input = getattr(event.content_block, 'input', {})
                                         response_content.append({
                                             "type": "tool_use",
                                             "id": event.content_block.id,
                                             "name": event.content_block.name,
-                                            "input": {}
+                                            "input": actual_input
                                         })
+                                        logger.debug(f"Created tool_use block: {event.content_block.name} (id: {event.content_block.id}) with input: {actual_input}")
                         elif event.type == "content_block_delta":
                             # Handle streaming content
+                            logger.debug(f"Processing content_block_delta: {event.delta}")
                             if hasattr(event.delta, 'text'):
                                 # Text content or thinking content
+                                logger.debug(f"Delta has text: '{event.delta.text}'")
                                 if response_content and response_content[-1].get("type") == "text":
                                     response_content[-1]["text"] += event.delta.text
                                 elif response_content and response_content[-1].get("type") == "thinking":
                                     response_content[-1]["thinking"] += event.delta.text
                             elif hasattr(event.delta, 'partial_json'):
                                 # Tool use input (streaming JSON)
+                                logger.debug(f"Delta has partial_json: '{event.delta.partial_json}'")
                                 if response_content and response_content[-1].get("type") == "tool_use":
                                     # Accumulate the JSON input
                                     if "partial_input" not in response_content[-1]:
                                         response_content[-1]["partial_input"] = ""
+                                        logger.debug(f"Started accumulating JSON for tool: {response_content[-1].get('name', 'unknown')}")
                                     response_content[-1]["partial_input"] += event.delta.partial_json
+                                    logger.debug(f"Accumulated JSON chunk: '{event.delta.partial_json}' (total length: {len(response_content[-1]['partial_input'])})")
                             elif hasattr(event.delta, 'type') and event.delta.type == "signature_delta":
                                 # Handle signature delta for thinking blocks
                                 if response_content and response_content[-1].get("type") == "thinking" and hasattr(event.delta, 'signature'):
                                     response_content[-1]["signature"] = event.delta.signature
+                            else:
+                                logger.debug(f"Delta event not handled - attributes: {dir(event.delta)}")
                         elif event.type == "content_block_stop":
                             # Content block finished - finalize tool use input if needed
                             if response_content and response_content[-1].get("type") == "tool_use":
                                 if "partial_input" in response_content[-1]:
                                     # Parse the accumulated JSON
-                                    import json
                                     try:
-                                        response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
+                                        parsed_input = json.loads(response_content[-1]["partial_input"])
+                                        response_content[-1]["input"] = parsed_input
+                                        logger.debug(f"Successfully parsed tool input: {parsed_input}")
                                         del response_content[-1]["partial_input"]
                                     except json.JSONDecodeError as e:
                                         logger.error(f"Failed to parse tool input JSON: {e}")
+                                        logger.error(f"Partial JSON that failed to parse: {response_content[-1]['partial_input']}")
                                         response_content[-1]["input"] = {}
                                         # Still remove partial_input even on error
                                         del response_content[-1]["partial_input"]
@@ -642,10 +691,11 @@ class MCPAnthropicClient:
                 # Final cleanup: ensure no partial_input fields remain in tool_use blocks
                 for content_item in response_content:
                     if content_item.get("type") == "tool_use" and "partial_input" in content_item:
-                        import json
                         try:
                             content_item["input"] = json.loads(content_item["partial_input"])
-                        except json.JSONDecodeError:
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse tool input JSON in final cleanup: {e}")
+                            logger.error(f"Partial JSON that failed to parse: {content_item['partial_input']}")
                             content_item["input"] = {}
                         del content_item["partial_input"]
                 
@@ -707,7 +757,7 @@ class MCPAnthropicClient:
             # Note: conversation_context parameter is available but not used in current implementation
             
             # Start conversation loop for multi-turn tool calling
-            max_turns = 25  # Prevent infinite loops
+            max_turns = int(os.getenv('MCP_MAX_TURNS', '25'))  # Prevent infinite loops
             turn = 0
             response_text = ""
             
@@ -809,6 +859,8 @@ class MCPAnthropicClient:
                     tool_name = tool_call.get("name", "")
                     tool_id = tool_call.get("id", f"call_{turn}_{tool_name}_{int(datetime.now().timestamp() * 1000)}")
                     arguments = tool_call.get("input", {})
+                    
+                    logger.debug(f"Extracted tool call - Name: {tool_name}, ID: {tool_id}, Arguments: {arguments}")
                     
                     # Create tool call record
                     tool_call_obj = ToolCall(
@@ -985,15 +1037,16 @@ class MCPAnthropicClient:
 class AnthropicWithMCP(AnthropicClient):
     """Extended Anthropic class with built-in MCP support."""
     
-    def __init__(self, aws_region: str = "us-east-1"):
-        super().__init__(aws_region=aws_region)
+    def __init__(self, aws_region: str = "us-east-1", use_bedrock: Optional[bool] = None):
+        super().__init__(aws_region=aws_region, use_bedrock=use_bedrock)
         self.mcp_client: Optional[MCPAnthropicClient] = None
     
     async def enable_mcp(self) -> None:
         """Enable MCP support by connecting to MCP servers."""
         if not self.mcp_client:
             self.mcp_client = MCPAnthropicClient(
-                aws_region=self.aws_region
+                aws_region=self.aws_region,
+                use_bedrock=self.use_bedrock
             )
             await self.mcp_client.__aenter__()
             logger.info("MCP support enabled")
@@ -1047,21 +1100,22 @@ class AnthropicWithMCP(AnthropicClient):
 async def prompt_with_mcp(
     prompt: str, 
     attachments: Optional[List[Attachment]] = None,
-    aws_region: str = "us-east-1"
+    aws_region: str = "us-east-1",
+    use_bedrock: Optional[bool] = None
 ) -> str:
     """
     Convenience function to prompt with MCP tool support.
     Creates a new client instance, processes the prompt, and cleans up.
     """
-    async with MCPAnthropicClient(aws_region=aws_region) as client:
+    async with MCPAnthropicClient(aws_region=aws_region, use_bedrock=use_bedrock) as client:
         return await client.prompt(prompt, attachments)
 
 
-async def create_mcp_enabled_anthropic(aws_region: str = "us-east-1") -> AnthropicWithMCP:
+async def create_mcp_enabled_anthropic(aws_region: str = "us-east-1", use_bedrock: Optional[bool] = None) -> AnthropicWithMCP:
     """
     Create an Anthropic instance with MCP support enabled.
     Remember to call disable_mcp() when done to cleanup connections.
     """
-    anthropic_client = AnthropicWithMCP(aws_region=aws_region)
+    anthropic_client = AnthropicWithMCP(aws_region=aws_region, use_bedrock=use_bedrock)
     await anthropic_client.enable_mcp()
     return anthropic_client
