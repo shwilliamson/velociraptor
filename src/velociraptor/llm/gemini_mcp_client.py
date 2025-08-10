@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional, Dict, List, Any
 # Forward reference for type hints
 from typing import TYPE_CHECKING
+import aiofiles
 
 from google.genai.types import GenerateContentConfig, FunctionDeclaration, Tool
 from mcp import ClientSession, StdioServerParameters
@@ -399,7 +400,6 @@ class MCPGeminiClient:
             
             # Add attachments if provided
             if attachments:
-                import aiofiles
                 for attachment in attachments:
                     try:
                         async with aiofiles.open(attachment.file_path, 'rb') as f:
