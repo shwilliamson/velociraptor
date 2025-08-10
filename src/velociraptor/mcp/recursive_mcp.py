@@ -30,7 +30,7 @@ async def handle_list_tools() -> list[Tool]:
     return [
         Tool(
             name="recursive_query",
-            description="Ask a question that can be answered by breaking it down recursively into smaller sub-questions. Useful for complex analysis tasks.",
+            description="Ask a question that can be answered by breaking it down recursively into smaller sub-questions. The original system prompt should be passed to maintain context. Useful for complex analysis tasks.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -41,6 +41,11 @@ async def handle_list_tools() -> list[Tool]:
                     "context": {
                         "type": "string", 
                         "description": "Additional context for the question (optional)",
+                        "default": ""
+                    },
+                    "system_prompt": {
+                        "type": "string",
+                        "description": "System prompt to prepend to the recursive query (optional)",
                         "default": ""
                     },
                     "depth": {
@@ -98,6 +103,7 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
     elif name == "recursive_query":
         question = arguments.get("question")
         context = arguments.get("context", "")
+        system_prompt = arguments.get("system_prompt", "")
         current_depth = arguments.get("depth", 0)
         
         if not question:
@@ -125,34 +131,40 @@ async def handle_call_tool(name: str, arguments: dict[str, Any]) -> list[TextCon
         try:
             logger.info(f"Making recursive call at depth {operating_depth}")
             
-            # Create MCP client for recursive call
-            mcp_client = MCPAnthropicClient()
+            # Create MCP client for recursive call with proper depth tracking
+            mcp_client = MCPAnthropicClient(recursion_depth=operating_depth)
             
             async with mcp_client:
-                # Build prompt for recursive analysis that includes recursive_query calls with incremented depth
-                system_context = f"""You are operating at recursion depth {operating_depth} of {MAX_RECURSION_DEPTH}.
+                # Build the complete prompt including original system prompt
+                recursive_instructions = f"""
+
+--- RECURSION CONTEXT ---
+You are operating at recursion depth {operating_depth} of {MAX_RECURSION_DEPTH}.
 Your role is to answer complex questions by breaking them down into smaller parts.
 
 Current question: {question}
 {f"Additional context: {context}" if context else ""}
 
 You have access to various MCP tools including:
-- recursive_query: Use this to break down complex sub-questions
 - semantic_search: For finding relevant information
 - Neo4j queries for graph-based analysis  
 - Page fetching for retrieving specific content
 - Full-text search capabilities
 
-CRITICAL: If you need to use recursive_query for sub-questions, you MUST pass depth={operating_depth} as a parameter. This is mandatory for depth tracking.
-
-Example: recursive_query(question="your sub-question", depth={operating_depth})
+NOTE: You cannot use recursive_query at this depth to prevent infinite recursion.
 
 Break this question down into smaller components and use available tools to gather information systematically. Provide a comprehensive answer based on your analysis.
 
-Important: You are currently at depth {operating_depth}/{MAX_RECURSION_DEPTH}. Any recursive_query calls must use depth={operating_depth}."""
+Important: You are currently at depth {operating_depth}/{MAX_RECURSION_DEPTH}."""
+
+                # Combine original system prompt with recursive instructions
+                if system_prompt.strip():
+                    full_prompt = f"{system_prompt.strip()}\n{recursive_instructions}"
+                else:
+                    full_prompt = recursive_instructions.strip()
 
                 # Make the recursive call
-                response = await mcp_client.prompt(system_context)
+                response = await mcp_client.prompt(full_prompt)
                 
                 logger.info(f"Completed recursive query at depth {operating_depth}")
                 

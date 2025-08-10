@@ -215,11 +215,12 @@ class AnthropicClient:
 class MCPAnthropicClient:
     """MCP-enhanced Anthropic client using manual function calling for full conversational control."""
 
-    def __init__(self, context_manager: Optional['ContextManager'] = None, aws_region: str = "us-east-1"):
+    def __init__(self, context_manager: Optional['ContextManager'] = None, aws_region: str = "us-east-1", recursion_depth: int = 0):
         self.anthropic_client = AnthropicClient(aws_region=aws_region)
         self.exit_stack: Optional[AsyncExitStack] = None
         self.mcp_sessions: List[ClientSession] = []
         self.context_manager = context_manager
+        self.recursion_depth = recursion_depth
         
         # Tool registry mapping tool names to MCP sessions and metadata
         self.tool_registry: Dict[str, Dict[str, Any]] = {}
@@ -261,15 +262,19 @@ class MCPAnthropicClient:
             )
         ]
         
-        # Add recursive server - depth limiting is now handled by the tool itself
-        self.servers.append(
-            MCPServer(
-                name="recursive_mcp",
-                container_pattern="recursive-mcp",
-                module_path="velociraptor.mcp.recursive_mcp",
-                description="Recursive query processing with depth limiting for complex multi-step analysis"
+        # Add recursive server only at depth 0 (top level) to prevent infinite recursion
+        if self.recursion_depth == 0:
+            self.servers.append(
+                MCPServer(
+                    name="recursive_mcp",
+                    container_pattern="recursive-mcp",
+                    module_path="velociraptor.mcp.recursive_mcp",
+                    description="Recursive query processing with depth limiting for complex multi-step analysis"
+                )
             )
-        )
+            logger.info("Recursive MCP server enabled (depth 0)")
+        else:
+            logger.info(f"Recursive MCP server disabled at depth {self.recursion_depth} to prevent infinite recursion")
 
     async def __aenter__(self):
         """Async context manager entry - connect to all MCP servers."""
@@ -546,6 +551,8 @@ class MCPAnthropicClient:
         tools: Optional[List[Dict]] = None
     ) -> Dict[str, Any]:
         """Call Anthropic with a list of conversation messages using streaming."""
+        import asyncio
+        
         # Build request parameters
         request_params = {
             "model": "arn:aws:bedrock:us-east-1:384232296347:inference-profile/us.anthropic.claude-sonnet-4-20250514-v1:0",
@@ -560,87 +567,115 @@ class MCPAnthropicClient:
         if tools:
             request_params["tools"] = tools
         
-        # Use streaming to handle extended thinking
-        response_content = []
-        response_model = None
-        response_stop_reason = None
-        response_usage = None
+        # Retry logic for rate limiting
+        max_retries = 3
+        retry_count = 0
         
-        async with self.anthropic_client.client.messages.stream(**request_params) as stream:
-            async for event in stream:
-                if hasattr(event, 'type'):
-                    if event.type == "message_start":
-                        response_model = event.message.model
-                        response_usage = event.message.usage
-                    elif event.type == "content_block_start":
-                        # Initialize content block
-                        if hasattr(event.content_block, 'type'):
-                            if event.content_block.type == "text":
-                                response_content.append({"type": "text", "text": ""})
-                            elif event.content_block.type == "thinking":
-                                response_content.append({"type": "thinking", "thinking": "", "signature": ""})
-                            elif event.content_block.type == "tool_use":
-                                response_content.append({
-                                    "type": "tool_use",
-                                    "id": event.content_block.id,
-                                    "name": event.content_block.name,
-                                    "input": {}
-                                })
-                    elif event.type == "content_block_delta":
-                        # Handle streaming content
-                        if hasattr(event.delta, 'text'):
-                            # Text content or thinking content
-                            if response_content and response_content[-1].get("type") == "text":
-                                response_content[-1]["text"] += event.delta.text
-                            elif response_content and response_content[-1].get("type") == "thinking":
-                                response_content[-1]["thinking"] += event.delta.text
-                        elif hasattr(event.delta, 'partial_json'):
-                            # Tool use input (streaming JSON)
+        while retry_count < max_retries:
+            # Use streaming to handle extended thinking
+            response_content = []
+            response_model = None
+            response_stop_reason = None
+            response_usage = None
+            
+            try:
+                async with self.anthropic_client.client.messages.stream(**request_params) as stream:
+                    async for event in stream:
+                        if hasattr(event, 'type'):
+                            if event.type == "message_start":
+                                response_model = event.message.model
+                                response_usage = event.message.usage
+                            elif event.type == "content_block_start":
+                                # Initialize content block
+                                if hasattr(event.content_block, 'type'):
+                                    if event.content_block.type == "text":
+                                        response_content.append({"type": "text", "text": ""})
+                                    elif event.content_block.type == "thinking":
+                                        response_content.append({"type": "thinking", "thinking": "", "signature": ""})
+                                    elif event.content_block.type == "tool_use":
+                                        response_content.append({
+                                            "type": "tool_use",
+                                            "id": event.content_block.id,
+                                            "name": event.content_block.name,
+                                            "input": {}
+                                        })
+                        elif event.type == "content_block_delta":
+                            # Handle streaming content
+                            if hasattr(event.delta, 'text'):
+                                # Text content or thinking content
+                                if response_content and response_content[-1].get("type") == "text":
+                                    response_content[-1]["text"] += event.delta.text
+                                elif response_content and response_content[-1].get("type") == "thinking":
+                                    response_content[-1]["thinking"] += event.delta.text
+                            elif hasattr(event.delta, 'partial_json'):
+                                # Tool use input (streaming JSON)
+                                if response_content and response_content[-1].get("type") == "tool_use":
+                                    # Accumulate the JSON input
+                                    if "partial_input" not in response_content[-1]:
+                                        response_content[-1]["partial_input"] = ""
+                                    response_content[-1]["partial_input"] += event.delta.partial_json
+                            elif hasattr(event.delta, 'type') and event.delta.type == "signature_delta":
+                                # Handle signature delta for thinking blocks
+                                if response_content and response_content[-1].get("type") == "thinking" and hasattr(event.delta, 'signature'):
+                                    response_content[-1]["signature"] = event.delta.signature
+                        elif event.type == "content_block_stop":
+                            # Content block finished - finalize tool use input if needed
                             if response_content and response_content[-1].get("type") == "tool_use":
-                                # Accumulate the JSON input
-                                if "partial_input" not in response_content[-1]:
-                                    response_content[-1]["partial_input"] = ""
-                                response_content[-1]["partial_input"] += event.delta.partial_json
-                        elif hasattr(event.delta, 'type') and event.delta.type == "signature_delta":
-                            # Handle signature delta for thinking blocks
-                            if response_content and response_content[-1].get("type") == "thinking" and hasattr(event.delta, 'signature'):
-                                response_content[-1]["signature"] = event.delta.signature
-                    elif event.type == "content_block_stop":
-                        # Content block finished - finalize tool use input if needed
-                        if response_content and response_content[-1].get("type") == "tool_use":
-                            if "partial_input" in response_content[-1]:
-                                # Parse the accumulated JSON
-                                import json
-                                try:
-                                    response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
-                                    del response_content[-1]["partial_input"]
-                                except json.JSONDecodeError as e:
-                                    logger.error(f"Failed to parse tool input JSON: {e}")
-                                    response_content[-1]["input"] = {}
-                                    # Still remove partial_input even on error
-                                    del response_content[-1]["partial_input"]
-                    elif event.type == "message_delta":
-                        response_stop_reason = event.delta.stop_reason
-                    elif event.type == "message_stop":
-                        # Message finished
-                        break
+                                if "partial_input" in response_content[-1]:
+                                    # Parse the accumulated JSON
+                                    import json
+                                    try:
+                                        response_content[-1]["input"] = json.loads(response_content[-1]["partial_input"])
+                                        del response_content[-1]["partial_input"]
+                                    except json.JSONDecodeError as e:
+                                        logger.error(f"Failed to parse tool input JSON: {e}")
+                                        response_content[-1]["input"] = {}
+                                        # Still remove partial_input even on error
+                                        del response_content[-1]["partial_input"]
+                        elif event.type == "message_delta":
+                            response_stop_reason = event.delta.stop_reason
+                        elif event.type == "message_stop":
+                            # Message finished
+                            break
+                
+                # If we get here, the request was successful, so return the response
+                # Final cleanup: ensure no partial_input fields remain in tool_use blocks
+                for content_item in response_content:
+                    if content_item.get("type") == "tool_use" and "partial_input" in content_item:
+                        import json
+                        try:
+                            content_item["input"] = json.loads(content_item["partial_input"])
+                        except json.JSONDecodeError:
+                            content_item["input"] = {}
+                        del content_item["partial_input"]
+                
+                return {
+                    "content": response_content,
+                    "model": response_model,
+                    "stop_reason": response_stop_reason,
+                    "usage": response_usage.model_dump() if response_usage else None
+                }
+                
+            except Exception as e:
+                # Check if this is a 429 rate limiting error
+                error_message = str(e)
+                if "429" in error_message and "Too many tokens" in error_message:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.info(f"Rate limit exceeded (429), sleeping for 1 minute before retry {retry_count}/{max_retries}")
+                        await asyncio.sleep(60)  # Sleep for 1 minute
+                        continue
+                    else:
+                        logger.error(f"Max retries ({max_retries}) exceeded for rate limiting")
+                        raise
+                else:
+                    # For non-rate-limiting errors, raise immediately
+                    raise
         
-        # Final cleanup: ensure no partial_input fields remain in tool_use blocks
-        for content_item in response_content:
-            if content_item.get("type") == "tool_use" and "partial_input" in content_item:
-                import json
-                try:
-                    content_item["input"] = json.loads(content_item["partial_input"])
-                except json.JSONDecodeError:
-                    content_item["input"] = {}
-                del content_item["partial_input"]
+        # This should never be reached due to the return/raise in the try/except
+        logger.error("Unexpected: exited retry loop without returning or raising")
+        raise Exception("Unexpected error in retry logic")
         
-        return {
-            "content": response_content,
-            "model": response_model,
-            "stop_reason": response_stop_reason,
-            "usage": response_usage.model_dump() if response_usage else None
-        }
 
     async def prompt(
         self, 
@@ -785,8 +820,10 @@ class MCPAnthropicClient:
                     tool_result = await self._call_mcp_tool(tool_name, arguments)
                     
                     # Write context to separate file for recursive calls
-                    if tool_name == "recursive_query" and arguments.get("depth", 0) > 0:
-                        await self._write_recursive_context(arguments.get("depth", 0), conversation_messages, tool_result)
+                    if tool_name == "recursive_query":
+                        # The recursive tool operates at depth + 1, so we create context file for that depth
+                        operating_depth = arguments.get("depth", 0) + 1
+                        await self._write_recursive_context(operating_depth, conversation_messages, tool_result)
                     
                     # Create tool result record
                     tool_result_obj = ToolResult(
