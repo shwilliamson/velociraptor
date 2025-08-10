@@ -53,6 +53,6 @@ done
 # Change to project root directory
 cd "$PROJECT_ROOT"
 
-# Execute the REPL with proper Python path
+# Execute the REPL with proper Python path, redirecting logs to file
 exec env PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}" \
-    python "$PROJECT_ROOT/src/velociraptor/scripts/vr.py"
+    python "$PROJECT_ROOT/src/velociraptor/scripts/vr.py" 2>> "$PROJECT_ROOT/logs.txt"

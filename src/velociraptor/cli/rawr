@@ -103,9 +103,9 @@ if __name__ == '__main__':
     asyncio.run(main())
 EOF
 
-# Set environment variables and execute
+# Set environment variables and execute, redirecting logs to file
 # Preserve existing environment while adding our variables
 env RAWR_PROMPT="$PROMPT" \
     RAWR_CONTINUE="$CONTINUE" \
     PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}" \
-    python "$TEMP_SCRIPT"
+    python "$TEMP_SCRIPT" 2>> "$PROJECT_ROOT/logs.txt"
