@@ -1,0 +1,111 @@
+#!/bin/bash
+
+# rawr - CLI wrapper for Velociraptor knowledge graph agent
+# Usage: rawr "prompt" or echo "prompt" | rawr
+
+set -euo pipefail
+
+# Get the directory of this script, resolving symlinks
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+# Resolve symlinks to get the actual script location
+while [[ -L "$SCRIPT_PATH" ]]; do
+    SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+    SCRIPT_PATH="$(readlink "$SCRIPT_PATH")"
+    [[ $SCRIPT_PATH != /* ]] && SCRIPT_PATH="$SCRIPT_DIR/$SCRIPT_PATH"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_PATH")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
+
+# Parse command line arguments
+CONTINUE=false
+PROMPT=""
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --continue)
+            CONTINUE=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: rawr [--continue] [\"prompt\"]"
+            echo ""
+            echo "Generate responses using Gemini LLM with MCP tool support"
+            echo ""
+            echo "Options:"
+            echo "  --continue    Continue conversation without prepending system prompt"
+            echo "  -h, --help    Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  rawr \"What documents are available?\""
+            echo "  rawr --continue \"Tell me more about that\""
+            echo "  echo \"What documents are available?\" | rawr"
+            echo "  echo \"Tell me more\" | rawr --continue"
+            exit 0
+            ;;
+        -*)
+            echo "Error: Unknown option $1" >&2
+            echo "Use 'rawr --help' for usage information" >&2
+            exit 1
+            ;;
+        *)
+            PROMPT="$1"
+            shift
+            ;;
+    esac
+done
+
+# Check if input is coming from pipe or arguments
+if [[ -p /dev/stdin ]]; then
+    # Input from pipe
+    PROMPT=$(cat)
+elif [[ -z "$PROMPT" ]]; then
+    # No input provided
+    echo "Error: No prompt provided" >&2
+    echo "Use 'rawr --help' for usage information" >&2
+    exit 1
+fi
+
+# Check if prompt is empty
+if [[ -z "$PROMPT" ]]; then
+    echo "Error: Empty prompt provided" >&2
+    exit 1
+fi
+
+# Change to project root directory
+cd "$PROJECT_ROOT"
+
+# Create a temporary Python script to avoid shell escaping issues
+TEMP_SCRIPT=$(mktemp)
+trap "rm -f $TEMP_SCRIPT" EXIT
+
+cat > "$TEMP_SCRIPT" << 'EOF'
+import asyncio
+import sys
+import os
+from velociraptor.scripts.rawr import rawr
+
+async def main():
+    try:
+        prompt = os.environ.get('RAWR_PROMPT', '')
+        continue_conv = os.environ.get('RAWR_CONTINUE', 'false').lower() == 'true'
+        
+        if not prompt:
+            print('Error: No prompt provided', file=sys.stderr)
+            sys.exit(1)
+            
+        response = await rawr(prompt, continue_conv)
+        print(response)
+    except Exception as e:
+        print(f'Error: {e}', file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == '__main__':
+    asyncio.run(main())
+EOF
+
+# Set environment variables and execute, redirecting logs to file
+# Preserve existing environment while adding our variables
+env RAWR_PROMPT="$PROMPT" \
+    RAWR_CONTINUE="$CONTINUE" \
+    PYTHONPATH="$PROJECT_ROOT/src:${PYTHONPATH:-}" \
+    python "$TEMP_SCRIPT" 2>> "$PROJECT_ROOT/logs.txt"
